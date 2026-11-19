@@ -569,6 +569,175 @@ async fn recheck_blocker_clears_satisfied_review_gate_blocker() {
 }
 
 #[tokio::test]
+async fn recheck_missing_checkpoint_resumes_queued_note_without_satisfying_other_gates() {
+    let cwd = temp_base("recheck-checkpoint-cwd");
+    let store = temp_base("recheck-checkpoint-store");
+    let orch = BuildOrchestrator::new(store.clone());
+    let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
+    std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
+    {
+        let mut map = orch.states.write().await;
+        let state = &mut map.get_mut("tab1").unwrap().state;
+        state.status = BuildRunStatus::Active;
+        state.preview_required = true;
+    }
+
+    let mut blocker = receipt(
+        &state,
+        BuildReceiptKind::BlockerOpened,
+        BuildReceiptConfidence::TrustedHost,
+    );
+    blocker.summary = "build_complete rejected: code changed but no checkpoint receipt exists. Checkpoint was not created because this objective forbids commits, and the dirty tree includes pre-existing source edits plus another tab's scratchboard.".into();
+    orch.append_receipt(blocker).await.unwrap();
+    orch.add_operator_note(
+        "tab1",
+        "Continue the existing review and verification work.",
+    )
+    .await
+    .unwrap();
+
+    let mut checkpoint = receipt(
+        &state,
+        BuildReceiptKind::CheckpointCreated,
+        BuildReceiptConfidence::TrustedHost,
+    );
+    checkpoint.data = json!({"checkpointId": "cp-1", "staged": 0, "unstaged": 1, "untracked": 0});
+    let checkpoint_receipt_id = checkpoint.receipt_id.clone();
+    orch.append_receipt(checkpoint).await.unwrap();
+
+    let blocked = orch.get_state("tab1").await.unwrap();
+    assert_eq!(blocked.status, BuildRunStatus::Blocked);
+    assert_eq!(blocked.checkpoint_id.as_deref(), Some("cp-1"));
+    assert!(blocked.review_required && !blocked.review_satisfied);
+    assert!(blocked.verification_required && !blocked.verification_satisfied);
+    assert!(blocked.preview_required && !blocked.preview_satisfied);
+    let result = orch.recheck_blocker("tab1").await.unwrap();
+    assert!(result.cleared);
+    assert_eq!(
+        result.matched_receipt_id.as_deref(),
+        Some(checkpoint_receipt_id.as_str())
+    );
+    let resumed = orch.get_state("tab1").await.unwrap();
+    assert_eq!(resumed.status, BuildRunStatus::Active);
+    assert_eq!(resumed.open_blocker, None);
+    assert!(resumed.review_required && !resumed.review_satisfied);
+    assert!(resumed.verification_required && !resumed.verification_satisfied);
+    assert!(resumed.preview_required && !resumed.preview_satisfied);
+    let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
+    assert!(prompt.contains("Continue the existing review and verification work."));
+    let continued = orch.get_state("tab1").await.unwrap();
+    assert!(continued.pending_operator_notes.is_empty());
+    assert_ne!(continued.status, BuildRunStatus::Complete);
+
+    let _ = std::fs::remove_dir_all(cwd);
+    let _ = std::fs::remove_dir_all(store);
+}
+
+#[tokio::test]
+async fn recheck_missing_checkpoint_requires_current_trusted_receipt_after_blocker() {
+    let cwd = temp_base("recheck-checkpoint-neg-cwd");
+    let store = temp_base("recheck-checkpoint-neg-store");
+    let orch = BuildOrchestrator::new(store.clone());
+    let mut state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
+    state.status = BuildRunStatus::Blocked;
+    state.open_blocker = Some("build_complete rejected: code changed but no checkpoint receipt exists. Checkpoint was not created because this objective forbids commits, and the dirty tree includes pre-existing source edits plus another tab's scratchboard.".into());
+    state.checkpoint_id = Some("cp-1".into());
+    let mut opened = receipt(
+        &state,
+        BuildReceiptKind::BlockerOpened,
+        BuildReceiptConfidence::TrustedHost,
+    );
+    opened.summary = state.open_blocker.clone().unwrap();
+    opened.created_at_ms = 20;
+    let mut checkpoint = receipt(
+        &state,
+        BuildReceiptKind::CheckpointCreated,
+        BuildReceiptConfidence::TrustedHost,
+    );
+    checkpoint.created_at_ms = 21;
+    checkpoint.data = json!({"checkpointId": "cp-1"});
+
+    let matching = [opened.clone(), checkpoint.clone()];
+    assert!(evaluate_blocker_recheck(&state, &matching).cleared);
+    let mut sentence_only = state.clone();
+    sentence_only.open_blocker =
+        Some("build_complete rejected: code changed but no checkpoint receipt exists.".into());
+    let mut sentence_opened = opened.clone();
+    sentence_opened.summary = sentence_only.open_blocker.clone().unwrap();
+    assert!(
+        evaluate_blocker_recheck(&sentence_only, &[sentence_opened, checkpoint.clone()]).cleared
+    );
+    assert!(!evaluate_blocker_recheck(&state, &[opened.clone()]).cleared);
+    assert!(!evaluate_blocker_recheck(&state, &[checkpoint.clone(), opened.clone()]).cleared);
+
+    for candidate in [
+        {
+            let mut r = checkpoint.clone();
+            r.confidence = BuildReceiptConfidence::ModelDeclared;
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.confidence = BuildReceiptConfidence::ObservedAcp;
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.run_id = "other-run".into();
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.tab_id = "other-tab".into();
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.data = json!({"checkpointId": "old"});
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.data = json!({"checkpointId": "cp-1", "checkpointUnavailable": true});
+            r
+        },
+        {
+            let mut r = checkpoint.clone();
+            r.created_at_ms = 19;
+            r
+        },
+    ] {
+        assert!(!evaluate_blocker_recheck(&state, &[opened.clone(), candidate]).cleared);
+    }
+    let mut no_current_id = state.clone();
+    no_current_id.checkpoint_id = None;
+    assert!(!evaluate_blocker_recheck(&no_current_id, &matching).cleared);
+    no_current_id.checkpoint_id = Some("  ".into());
+    assert!(!evaluate_blocker_recheck(&no_current_id, &matching).cleared);
+    let mut unrelated = state.clone();
+    unrelated.open_blocker = Some("operator asked about the checkpoint receipt".into());
+    let mut unrelated_opened = opened.clone();
+    unrelated_opened.summary = unrelated.open_blocker.clone().unwrap();
+    assert!(!evaluate_blocker_recheck(&unrelated, &[unrelated_opened, checkpoint.clone()]).cleared);
+    unrelated.open_blocker = Some("build_complete rejected: code changed but no checkpoint receipt exists for another project".into());
+    let mut similar_opened = opened.clone();
+    similar_opened.summary = unrelated.open_blocker.clone().unwrap();
+    assert!(!evaluate_blocker_recheck(&unrelated, &[similar_opened, checkpoint.clone()]).cleared);
+    for status in [
+        BuildRunStatus::Halted,
+        BuildRunStatus::Complete,
+        BuildRunStatus::TransportFailed,
+    ] {
+        let mut terminal = state.clone();
+        terminal.status = status;
+        assert!(!evaluate_blocker_recheck(&terminal, &matching).cleared);
+    }
+
+    let _ = std::fs::remove_dir_all(cwd);
+    let _ = std::fs::remove_dir_all(store);
+}
+
+#[tokio::test]
 async fn recheck_blocker_keeps_running_agent_blocker() {
     let cwd = temp_base("recheck-running-agent-cwd");
     let store = temp_base("recheck-running-agent-store");
@@ -1095,6 +1264,12 @@ fn preview_gate_ignores_non_visual_browser_sdk_objectives() {
     assert!(build_objective_requires_preview("build a web page"));
     assert!(build_objective_requires_preview(
         "build a browser settings screen"
+    ));
+    assert!(!build_objective_requires_preview(
+        "Create one new plain text data file. Preserve README.md and dist/index.html. This changes no application code or UI, so skip unrelated UI previews."
+    ));
+    assert!(build_objective_requires_preview(
+        "Create a plain text data file and build a web page"
     ));
 }
 

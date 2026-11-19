@@ -10,7 +10,7 @@
  * * PreviewTarget is still exported for legacy file/URL preview callers;
  * WorkPreviewPanel is the right-rail live app preview surface.
  */
-import { lazy, useCallback, useEffect, useMemo, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -622,11 +622,15 @@ function ToolingPane({
   const [cutOpening, setCutOpening] = useState(false);
   const [cutCheckSequence, setCutCheckSequence] = useState(0);
   const [cutActionError, setCutActionError] = useState<string | null>(null);
+  const cutActionEpoch = useRef(0);
+  const cutActionInFlight = useRef(false);
   const [loading, setLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    cutActionEpoch.current += 1;
+    cutActionInFlight.current = false;
     setEntries([]);
     setHealth({});
     setSessionInfo(null);
@@ -640,9 +644,13 @@ function ToolingPane({
     if (!activeTabId || !inTauri()) return;
 
     let cancelled = false;
-    const refresh = async () => {
-      setLoading(true);
+    let inFlight = false;
+    const refresh = async (showLoading: boolean) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (showLoading) setLoading(true);
       try {
+        const cutEpoch = cutActionEpoch.current;
         const snapshot = await invoke<SessionToolingSnapshot>("session_tooling_snapshot", { tabId: activeTabId });
         if (cancelled) return;
         const nextHealth: Record<string, MarketplaceHealthEntry> = {};
@@ -652,20 +660,25 @@ function ToolingPane({
         setEntries(snapshot.desired);
         setHealth(nextHealth);
         setSessionInfo(snapshot.session);
-        setCutStatus(snapshot.cut);
+        if (!cutActionInFlight.current && cutActionEpoch.current === cutEpoch) {
+          setCutStatus(snapshot.cut);
+        }
         setHasLoaded(true);
         setError(null);
       } catch (e) {
         if (!cancelled) setError(typeof e === "string" ? e : String(e));
       } finally {
-        if (!cancelled) setLoading(false);
+        inFlight = false;
+        if (!cancelled && showLoading) setLoading(false);
       }
     };
 
-    void refresh();
-    const id = window.setInterval(() => void refresh(), 4000);
+    void refresh(true);
+    const id = window.setInterval(() => void refresh(false), 4000);
     return () => {
       cancelled = true;
+      cutActionEpoch.current += 1;
+      cutActionInFlight.current = false;
       window.clearInterval(id);
     };
   }, [activeTabId, connectionLabel, connectionTransport, connectionId]);
@@ -710,34 +723,48 @@ function ToolingPane({
     ? (hasConnectedEnvironment ? sessionStatus : "awaiting session")
     : sessionStatus;
   const checkCutStatus = async (): Promise<void> => {
-    if (!activeTabId || cutChecking || cutOpening) return;
+    if (!activeTabId || cutActionInFlight.current) return;
+    cutActionInFlight.current = true;
+    const cutEpoch = ++cutActionEpoch.current;
     setCutActionError(null);
     setCutChecking(true);
-    setCutStatus((current) => current
-      ? { ...current, ...CUT_TOOLING_FIXTURES.checking, target: current.target }
-      : CUT_TOOLING_FIXTURES.checking);
     try {
       const snapshot = await invoke<SessionToolingSnapshot>("session_tooling_snapshot", { tabId: activeTabId });
+      if (cutActionEpoch.current !== cutEpoch) return;
       setCutStatus(snapshot.cut);
       setSessionInfo(snapshot.session);
       setCutCheckSequence((current) => current + 1);
     } catch (e) {
-      setCutActionError(typeof e === "string" ? e : String(e));
+      if (cutActionEpoch.current === cutEpoch) {
+        setCutActionError(typeof e === "string" ? e : String(e));
+      }
     } finally {
-      setCutChecking(false);
+      if (cutActionEpoch.current === cutEpoch) {
+        cutActionInFlight.current = false;
+        cutActionEpoch.current += 1;
+        setCutChecking(false);
+      }
     }
   };
   const openCut = async (): Promise<void> => {
-    if (!activeTabId || cutOpening) return;
+    if (!activeTabId || cutActionInFlight.current) return;
+    cutActionInFlight.current = true;
+    const cutEpoch = ++cutActionEpoch.current;
     setCutActionError(null);
     setCutOpening(true);
     try {
       const next = await invoke<CutToolingStatus>("cut_tooling_open", { tabId: activeTabId });
-      setCutStatus(next);
+      if (cutActionEpoch.current === cutEpoch) setCutStatus(next);
     } catch (e) {
-      setCutActionError(typeof e === "string" ? e : String(e));
+      if (cutActionEpoch.current === cutEpoch) {
+        setCutActionError(typeof e === "string" ? e : String(e));
+      }
     } finally {
-      setCutOpening(false);
+      if (cutActionEpoch.current === cutEpoch) {
+        cutActionInFlight.current = false;
+        cutActionEpoch.current += 1;
+        setCutOpening(false);
+      }
     }
   };
 

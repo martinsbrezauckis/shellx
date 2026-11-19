@@ -695,8 +695,8 @@ export function providerPermissionModeOptions(
       {
         mode: "default",
         label: "Provider default",
-        detail: "Codex uses workspace-write with native untrusted approval behavior.",
-        native: "--sandbox workspace-write -a untrusted",
+        detail: "Codex uses workspace-write with its on-request approval policy.",
+        native: "--sandbox workspace-write -a on-request",
       },
       {
         mode: "readOnly",

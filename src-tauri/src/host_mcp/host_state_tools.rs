@@ -54,7 +54,7 @@ pub(super) async fn tool_capabilities_summary(
             { "category": "agents", "tools": ["Agent", "Agent_status", "Agent_output", "Agent_poll_all", "Agent_kill", "Agent_metrics"], "personas": crate::subagent::PERSONA_NAMES },
             { "category": "build", "tools": ["build_state", "build_receipts", "build_receipt", "build_checkpoint", "build_complete"] },
             { "category": "preview", "tools": ["preview_start", "preview_state", "preview_logs", "preview_diagnose"], "note": "For UI/web/Expo work use shellX Work Preview before build_complete." },
-            { "category": "browser", "tools": ["browser_read", "browser_act"], "note": "Use browser_read action=tabs, browser_act action=navigate, then browser_read action=observe for token-budgeted stable refs. Prefer refs; use coordinates only after screenshot evidence and Browser/Vault actions for secrets. browser_act action=runSteps batches a short route. Flight Recorder uses permission-gated flightRecorderExport/evaluationWrite plus caller-scoped browser_read action=evidence. Use targeted search_tool queries for exact uncommon fields and keep bounded evidence in ShellX storage." },
+            { "category": "browser", "tools": ["browser_read", "browser_act"], "note": "These are native ShellX Browser tools, separate from optional marketplace Playwright. Use browser_read action=tabs, browser_act action=navigate, then browser_read action=observe for token-budgeted stable refs; browser_read action=extract returns page content. findText is a browser_act action=runSteps step only. A promptInjectionReview block requires operator review, not an agent tool. Prefer refs; use coordinates only after screenshot evidence and Browser/Vault actions for secrets. Flight Recorder uses permission-gated flightRecorderExport/evaluationWrite plus caller-scoped browser_read action=evidence." },
             { "category": "videoEditing", "tools": ["cut_read", "cut_act"], "note": "Use cut_read status/search/schema to discover one exact installed ShellX Cut verb, then permission-gated cut_act to execute it through the running editor. The large generated Cut catalog remains internal and cached instead of entering every provider prompt." },
             { "category": "mediaAndSearch", "tools": ["vision_describe", "voice_stt_v2", "voice_tts", "x_search", "net_fetch"] },
             { "category": "memoryAndTime", "tools": ["mem_set", "mem_get", "mem_list", "mem_delete", "clock_now", "sleep_ms"] },
@@ -63,7 +63,7 @@ pub(super) async fn tool_capabilities_summary(
         "marketplaceDiscovery": {
             "prefixPattern": "shellx-mp-*",
             "commonServers": ["shellx-mp-playwright", "shellx-mp-context7", "shellx-mp-fetch", "shellx-mp-git", "shellx-mp-memory"],
-            "rule": "Use native search_tool for exact marketplace tool names and schemas; do not assume an installed connector is healthy until session tooling or Environment reports it."
+            "rule": "Marketplace Playwright is separate from native ShellX Browser. Discover its actual tools in this session with search_tool; do not assume an installed connector is healthy until session tooling or Environment reports it."
         },
         "buildGateRule": "Do not use upstream task-based /check-work, /best-of-n, /execute-plan, /implement, /review, or /design as shellX /build hard gates. Use shellX Agent receipts plus Preview Doctor evidence.",
     }))

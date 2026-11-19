@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
+use serde_json::json;
 use url::Url;
 
 use crate::shellx_browser::{
-    clean_string, lock_or_recover, BrowserState, BrowserTransferApproval, ShellxBrowserRegistry,
+    clean_string, lock_or_recover, push_receipt, BrowserState, BrowserTransferApproval,
+    ShellxBrowserRegistry,
 };
 use crate::shellx_browser_transfer_artifacts::{
     discard_native_browser_download_stage, prepare_native_browser_download_stage,
@@ -29,6 +31,11 @@ pub(crate) struct BrowserNativeDownloadPermit {
     pub(crate) browser_tab_id: Option<String>,
     pub(crate) approval_id: Option<String>,
     pub(crate) status: NativeDownloadPermitStatus,
+    pub(crate) replay_phase: NativeDownloadReplayPhase,
+    #[cfg(windows)]
+    pub(crate) webview2_replay_dispatched: bool,
+    #[cfg(windows)]
+    pub(crate) webview2_replay_permission_claimed: bool,
     pub(crate) destination_dir: Option<String>,
     pub(crate) display_name: Option<String>,
     pub(crate) stage: Option<Arc<BrowserNativeDownloadStage>>,
@@ -47,6 +54,14 @@ pub(crate) enum NativeDownloadPermitStatus {
     InProgress,
     Finalizing,
     CleanupPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeDownloadReplayPhase {
+    Idle,
+    AwaitingAck,
+    Ready,
+    InReplay,
 }
 
 #[derive(Clone, Debug)]
@@ -93,9 +108,125 @@ pub(crate) fn native_download_replay_failure_reason(source_url: &str) -> Option<
 }
 
 pub(crate) const NATIVE_DOWNLOAD_REPLAY_TIMEOUT_DETAIL: &str =
-    "native Browser download did not re-enter the callback after URL-addressable replay; the original request may have required POST, form state, or an unsupported URL";
+    "native Browser download did not re-enter the callback within 15 seconds of approved URL replay";
 
 impl ShellxBrowserRegistry {
+    /// WebView2 asks for the document origin, not the download target URL.
+    /// Claim only the one automatic-download permission event caused by an
+    /// operator-approved replay. The download callback still requires the
+    /// exact source URL and consumes the permit separately.
+    #[cfg(windows)]
+    pub(crate) fn claim_webview2_native_download_replay_permission(
+        &self,
+        engine_id: &str,
+        event_binding: &str,
+        permission_uri: &str,
+    ) -> bool {
+        let Ok(permission_url) = Url::parse(permission_uri) else {
+            return false;
+        };
+        if !matches!(permission_url.scheme(), "http" | "https")
+            || permission_url.host_str().is_none()
+            || !permission_url.username().is_empty()
+            || permission_url.password().is_some()
+        {
+            return false;
+        }
+        let mut state = lock_or_recover(&self.state);
+        let matching = state
+            .native_download_permits
+            .iter()
+            .filter(|(transfer_id, permit)| {
+                permit.engine_id == engine_id
+                    && permit.event_binding == event_binding
+                    && permit.status == NativeDownloadPermitStatus::Approved
+                    && permit.replay_phase == NativeDownloadReplayPhase::InReplay
+                    && permit.webview2_replay_dispatched
+                    && !permit.webview2_replay_permission_claimed
+                    && permit.approval_id.is_some()
+                    && native_download_replay_failure_reason(&permit.source_url).is_none()
+                    && native_download_permit_matches_current_engine_context_locked(&state, permit)
+                    && !state.native_download_cancellation_acks.has_pending(
+                        engine_id,
+                        event_binding,
+                        &permit.source_url,
+                    )
+                    && state.downloads.iter().any(|entry| {
+                        entry.transfer_id.as_str() == transfer_id.as_str()
+                            && entry.status == "approved"
+                            && entry.requires_approval
+                            && entry.approval_id == permit.approval_id
+                    })
+            })
+            .map(|(transfer_id, _)| transfer_id.clone())
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return false;
+        }
+        let engine = state
+            .engine_pool
+            .engines
+            .iter()
+            .find(|engine| engine.engine_id == engine_id)
+            .or_else(|| (state.engine.engine_id == engine_id).then_some(&state.engine));
+        let Some(document_origin) = engine
+            .and_then(|engine| engine.url.as_deref())
+            .and_then(|url| Url::parse(url).ok())
+            .map(|url| url.origin())
+        else {
+            return false;
+        };
+        if permission_url.origin() != document_origin {
+            return false;
+        }
+        if let Some(permit) = state.native_download_permits.get_mut(&matching[0]) {
+            permit.webview2_replay_permission_claimed = true;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn record_native_download_replay_dispatch(
+        &self,
+        resume: &BrowserNativeDownloadResume,
+    ) -> Result<(), String> {
+        let mut state = lock_or_recover(&self.state);
+        let permit = state
+            .native_download_permits
+            .get(&resume.transfer_id)
+            .ok_or_else(|| {
+                "native Browser download permit was removed before replay".to_string()
+            })?;
+        if permit.status != NativeDownloadPermitStatus::Approved
+            || permit.replay_phase != NativeDownloadReplayPhase::InReplay
+            || permit.approval_id.as_deref() != Some(resume.approval_id.as_str())
+            || permit.engine_id != resume.engine_id
+            || permit.event_binding != resume.event_binding
+            || permit.source_url != resume.source_url
+            || !native_download_permit_matches_current_engine_context_locked(&state, permit)
+        {
+            return Err("native Browser download approval is no longer current".to_string());
+        }
+        let task_id = permit.task_id.clone();
+        #[cfg(windows)]
+        {
+            state
+                .native_download_permits
+                .get_mut(&resume.transfer_id)
+                .expect("validated native replay permit remains present")
+                .webview2_replay_dispatched = true;
+        }
+        push_receipt(
+            &mut state,
+            "browserNativeDownloadReplayDispatched",
+            task_id,
+            None,
+            "Native download replay dispatched".to_string(),
+            json!({ "transferId": resume.transfer_id }),
+        );
+        Ok(())
+    }
+
     pub(crate) fn native_download_resume_matches_current_engine_context(
         &self,
         resume: &BrowserNativeDownloadResume,
@@ -120,7 +251,7 @@ impl ShellxBrowserRegistry {
         if approval.direction != "download" {
             return Ok(None);
         }
-        let state = lock_or_recover(&self.state);
+        let mut state = lock_or_recover(&self.state);
         let Some(permit) = state
             .native_download_permits
             .get(&approval.transfer_id)
@@ -180,11 +311,23 @@ impl ShellxBrowserRegistry {
             event_binding: permit.event_binding,
             source_url: permit.source_url,
         };
-        if pending_cancellation_acknowledgement {
-            Ok(None)
-        } else {
-            Ok(Some(resume))
+        let phase = state
+            .native_download_permits
+            .get(&approval.transfer_id)
+            .expect("native permit was checked while holding the state lock")
+            .replay_phase;
+        if pending_cancellation_acknowledgement || phase == NativeDownloadReplayPhase::InReplay {
+            return Ok(None);
         }
+        if phase != NativeDownloadReplayPhase::Ready {
+            return Err("native Browser download replay is not ready".to_string());
+        }
+        state
+            .native_download_permits
+            .get_mut(&approval.transfer_id)
+            .expect("native permit was checked while holding the state lock")
+            .replay_phase = NativeDownloadReplayPhase::InReplay;
+        Ok(Some(resume))
     }
 
     pub(crate) fn native_download_requested(
@@ -238,6 +381,7 @@ impl ShellxBrowserRegistry {
                 };
             };
             if permit.status != NativeDownloadPermitStatus::Approved
+                || permit.replay_phase != NativeDownloadReplayPhase::InReplay
                 || !native_download_permit_matches_current_engine_context_locked(&state, &permit)
                 || state.native_download_cancellation_acks.has_pending(
                     engine_id,
@@ -305,6 +449,7 @@ impl ShellxBrowserRegistry {
                     "native Browser download permit was removed before execution".to_string()
                 })?;
             if permit.status != NativeDownloadPermitStatus::Approved
+                || permit.replay_phase != NativeDownloadReplayPhase::InReplay
                 || permit.engine_id != engine_id
                 || permit.event_binding != event_binding
                 || permit.source_url != source_url

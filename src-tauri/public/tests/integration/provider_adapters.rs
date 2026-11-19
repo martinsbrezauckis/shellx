@@ -64,6 +64,44 @@ fn codex_command_uses_json_exec_and_auto_permissions_by_default() {
 }
 
 #[test]
+fn codex_explicit_default_preserves_workspace_sandbox_and_approval_requests() {
+    for (mode, expected) in [
+        (
+            ProviderPermissionMode::Default,
+            vec!["--sandbox", "workspace-write", "-a", "on-request"],
+        ),
+        (
+            ProviderPermissionMode::ReadOnly,
+            vec!["--sandbox", "read-only", "-a", "never"],
+        ),
+        (
+            ProviderPermissionMode::AcceptEdits,
+            vec!["--sandbox", "workspace-write", "-a", "never"],
+        ),
+        (
+            ProviderPermissionMode::BypassPermissions,
+            vec!["--dangerously-bypass-approvals-and-sandbox"],
+        ),
+    ] {
+        let spec = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            "Inspect the task",
+            ProviderCommandOptions {
+                permission_mode: mode,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(spec.args.starts_with(
+            &expected
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>()
+        ));
+    }
+}
+
+#[test]
 fn claude_command_uses_stream_json_and_auto_permissions_by_default() {
     let spec = build_provider_command(
         ProviderId::ClaudeCode,

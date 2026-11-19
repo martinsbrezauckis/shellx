@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The raw audit still exits 1: this accepts one reviewed 0.3.62 build-tool
+// The raw audit still exits 1: this accepts one reviewed 0.3.63 build-tool
 // exposure only. All new findings, changed paths or versions, and stale
 // dispositions fail closed.
-const RELEASE_VERSION = "0.3.62";
+const RELEASE_VERSION = "0.3.63";
 const EXPECTED_ID = "GHSA-fc5q-39xc-vjpf";
 const EXPECTED_PATH = ".>vite>picomatch";
 const EXPECTED_VERSION = "4.0.7";
-const EXPIRES_AT = Date.parse("2026-12-17T23:59:59.999Z");
+const EXPIRES_AT = Date.parse("2026-12-18T23:59:59.999Z");
 
 export function evaluatePnpmAuditReport({ report, exitStatus, packageVersion, lockText, now = new Date() }) {
   if (!report || typeof report.advisories !== "object" || report.advisories === null
@@ -23,7 +23,7 @@ export function evaluatePnpmAuditReport({ report, exitStatus, packageVersion, lo
     return "pnpm audit: no reported advisories";
   }
   if (packageVersion !== RELEASE_VERSION || now.getTime() > EXPIRES_AT) {
-    throw new Error("picomatch build-tool disposition is limited to unexpired ShellX 0.3.62");
+    throw new Error("picomatch build-tool disposition is limited to unexpired ShellX 0.3.63");
   }
   if (!lockText.includes("vite@6.4.6") || !lockText.includes("picomatch@4.0.7")) {
     throw new Error("reviewed Vite/picomatch lockfile versions changed; re-triage the advisory");
@@ -41,9 +41,9 @@ export function evaluatePnpmAuditReport({ report, exitStatus, packageVersion, lo
     || finding.paths[0] !== EXPECTED_PATH
     || counts?.high !== 1
     || ["info", "low", "moderate", "critical"].some((severity) => counts?.[severity] !== 0)) {
-    throw new Error("pnpm audit has a finding beyond the exact reviewed 0.3.62 build-tool disposition");
+    throw new Error("pnpm audit has a finding beyond the exact reviewed 0.3.63 build-tool disposition");
   }
-  return `ACCEPTED FOR 0.3.62 BUILD TOOL ONLY: ${EXPECTED_ID} ${EXPECTED_PATH}@${EXPECTED_VERSION}; raw audit exit 1`;
+  return `ACCEPTED FOR 0.3.63 BUILD TOOL ONLY: ${EXPECTED_ID} ${EXPECTED_PATH}@${EXPECTED_VERSION}; raw audit exit 1`;
 }
 
 function main() {

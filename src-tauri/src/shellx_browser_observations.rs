@@ -259,14 +259,6 @@ pub(crate) fn browser_observation_refs_with_synthetic(
             "navigate",
             Some(true),
         ),
-        synthetic_browser_ref(
-            "report",
-            "button",
-            "Write report".to_string(),
-            None,
-            "writeReport",
-            Some(false),
-        ),
     ];
     merged.extend(
         refs.into_iter()

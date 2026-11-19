@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@5",
   "source": {
-    "commit": "2a009ca5c6e70a715c35a021eb5d583e8ae7315b",
-    "tree": "a756c7df50db17107f2e0d5eefce1e04085acd58"
+    "commit": "eb64f04c5fa78d780dfee95153409c25d5ff69da",
+    "tree": "c1840b314b3ea4d6112dca756c0a94513559adbb"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -11,27 +11,27 @@
   "publicTooling": {
     "registry": {
       "schema": "shellx/public-script-registry@1",
-      "sha256": "d3c57d768933491a6c94f2769173d87aa0410cfedc520203f9045752f351d29d"
+      "sha256": "82c0d75a9daeaeea144b729c4366c2f97baeae25dfb440332d57f1349e1896fd"
     },
-    "scriptFileCount": 49,
+    "scriptFileCount": 50,
     "packageScriptCount": 11
   },
   "projections": [
     {
       "path": "package.json",
-      "sourceSha256": "f140b4285260cfd14c7d0eac3fe4ad89b93ab43ec4a973170fa4c067eb787bfb",
-      "payloadSha256": "02a49700c267ec011a6e0ce80e04eb3f7fcfd810c70127e70eaa5bfbffe3b9b8"
+      "sourceSha256": "c3bf959c37a63d97c97132f04b9497c165dcd228788e7058f041dfa248bc2a7d",
+      "payloadSha256": "39c7c9ba318cb111ba4a132bf19de49584fcb273280b5bace2570d3ec61facc1"
     }
   ],
   "nativeRustTestProjection": {
     "schema": "shellx/public-native-rust-test-projection@1",
-    "runtimeSourceFileCount": 656,
+    "runtimeSourceFileCount": 660,
     "projectedRuntimeSourceFileCount": 65,
     "projectedBuildInputFileCount": 7,
     "removedItemCount": 214,
     "rewrittenCfgCount": 48,
-    "sourceDigest": "c95d813c0416b1cff24d18d0364c36fb61dc633f4d02b01f61c17a94c138d788",
-    "payloadDigest": "f2d5e958b250d71e647f7acb9c08210b23a54a8af70b68c6ebd316f8131ac13d"
+    "sourceDigest": "cb62addc0a9e2c2c9310773aa01c7e19da232fa2ad029037e0274b0b2dc55e9f",
+    "payloadDigest": "ad946fc42d96c8c87d2039312aab49f93be96ec742e6ccbf6011516b8d272ab4"
   },
   "manifestFile": {
     "path": "PUBLIC_EXPORT_MANIFEST.json",
@@ -43,17 +43,17 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 2075,
-    "includedTrackedFileCount": 1256,
-    "excludedTrackedFileCount": 819
+    "trackedFileCount": 2084,
+    "includedTrackedFileCount": 1261,
+    "excludedTrackedFileCount": 823
   },
   "payload": {
-    "fileCount": 1257,
-    "totalBytes": 22427669,
-    "digest": "e8ddcf4bf6a5f797eb5e2b2fcfc0355d8154d667c1885b4a639d03b97df5b7df"
+    "fileCount": 1262,
+    "totalBytes": 22576459,
+    "digest": "224ad8e30601c813a6a24a98ce157083adc92ad4911a0318e213e2a7ea99eb20"
   },
   "exclusions": {
-    "fileCount": 819,
+    "fileCount": 823,
     "byCategory": {
       "private-dependency-update-automation": 1,
       "private-developer-test-source": 12,
@@ -62,8 +62,8 @@
       "private-release-contracts": 8,
       "private-security-scanner-dispositions": 2,
       "private-vendor-developer-material": 35,
-      "private-working-documentation": 21,
-      "private-working-tooling": 703
+      "private-working-documentation": 23,
+      "private-working-tooling": 705
     }
   },
   "entries": [
@@ -81,7 +81,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "mode": "100644",
-      "sha256": "3fdd812b53a0d695db303899f86004633928600c6cafa68f33b29a4bd14e9cb6",
+      "sha256": "7b2133fbb395855fe98222534725f4a29c21819579c12adb58d3a15c83854213",
       "bytes": 4060,
       "ruleId": "public-automation",
       "matchedBy": "exact",
@@ -114,8 +114,8 @@
     {
       "path": "CHANGELOG.md",
       "mode": "100644",
-      "sha256": "2fa5efc90a3daafff58b8b05345406598b142aec0983f508a7ee5a524bb45bb8",
-      "bytes": 26858,
+      "sha256": "52a1b5923c1410febd8962b481b9f7c7801cd23e41ea39ea537df0252f0cdc13",
+      "bytes": 27771,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": "CHANGELOG.md",
@@ -136,8 +136,8 @@
     {
       "path": "docs/public/ARCHITECTURE.md",
       "mode": "100644",
-      "sha256": "187f860b61e6b4d40408211009f451c324b8c44809efd70d7deeaa6c22cbe675",
-      "bytes": 30919,
+      "sha256": "cfd3c1bc62c54b3e001cafbb83a2a79297d5d661da7f0c275bda08fe4196a2d4",
+      "bytes": 31192,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -189,9 +189,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
+      "path": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-bit8OU6e.js",
       "mode": "100644",
-      "sha256": "c4bfbb426084b59f5c9a2bf6e771136308a4fe5c06a85efa3c6284c584f02872",
+      "sha256": "8f6385ffe1a4b24089bef57ae537d4cbaebd3569e0ef3685534c6264e236cf2a",
       "bytes": 46991,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -233,9 +233,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
+      "path": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-BC9zxcnU.js",
       "mode": "100644",
-      "sha256": "9f20e96f2d4d135bcfd3cb132059d217f4f3f6ae8565195f1c041fec900cdc80",
+      "sha256": "47ee2d6ecdcb4f90b3a9f64327dcc0a26ad56a7df644e242f6232261945af92b",
       "bytes": 9410,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -255,9 +255,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
+      "path": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CpanHMO3.js",
       "mode": "100644",
-      "sha256": "23363ec17bd426702a3618347e1ffaa4fc20ce6f4c53ad8a288b47300dd4c5fe",
+      "sha256": "ff87d2ad1441d05bde64a6c14b2c79ab90516a4956471b4acd7636dcc441cad0",
       "bytes": 9223,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -409,9 +409,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
+      "path": "docs/public/manual/shellx/app/assets/BuildRunCockpit-z83uwDdP.js",
       "mode": "100644",
-      "sha256": "719328a9e95903e069f939047aba1fc3d4ce9fce3ca4a8e2722e5049aa7d150a",
+      "sha256": "a5250cdcb8c36e9d8913784e62afc926520aaf99a9a981c2ee4dcbc85ad092c5",
       "bytes": 7198,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -420,10 +420,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
+      "path": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BV6Lsiku.js",
       "mode": "100644",
-      "sha256": "dffd740850799c1045f1e3c86701db65fed2df77c1d927a7baf66a3b1f843db9",
-      "bytes": 102294,
+      "sha256": "0068618b203d4c5c2080ea1f61c92c9053867811a17e4bd1daf685e372964392",
+      "bytes": 103207,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -453,9 +453,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
+      "path": "docs/public/manual/shellx/app/assets/ConnectionEditor-D_kdya4D.js",
       "mode": "100644",
-      "sha256": "a86c28aae81c8d597105a74546e614a77e3ca4a6d9d46bed4ca2b91546f1b6c7",
+      "sha256": "be4216cdabb18de5a6e609bc8634b47cfd7067d9ee83a8189f737813a40ba999",
       "bytes": 12454,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -464,9 +464,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
+      "path": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-BcWeg24X.js",
       "mode": "100644",
-      "sha256": "a1c58aa214e5be62803b08611108a3fe07b9b5763157217929433c0620b7e476",
+      "sha256": "6a2f87ece38f3fb980768b8ecab38277bccf64180b3f852abc323901527fd010",
       "bytes": 6618,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -519,9 +519,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/FilesPane-Db173xGt.js",
+      "path": "docs/public/manual/shellx/app/assets/FilesPane-eyMzT5Ay.js",
       "mode": "100644",
-      "sha256": "31665bb04e6669fa07c9697d1b43d213872b70dd6fda504aa2db05a979f15697",
+      "sha256": "f95e2e07920d523a5c2dceecb64ed9ddc5b1f9b9bdc4021e5eddf8b0472fcc65",
       "bytes": 5199,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -541,10 +541,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
+      "path": "docs/public/manual/shellx/app/assets/HelpModal-0sMO7yTK.js",
       "mode": "100644",
-      "sha256": "8827b978aef532a892e0c8c22ba17d0ce5cdfa39a81d21acdd719f1183154482",
-      "bytes": 1430,
+      "sha256": "679aa71ec0dbf3a4b3e0b2b96f1f11a3f1388bb477bf51b216953d6e604a63e3",
+      "bytes": 1717,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -673,10 +673,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
+      "path": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-CTNU9t3M.js",
       "mode": "100644",
-      "sha256": "145ce8bb9f97d49db53d59a9a0cc93b8923ce3c19792f816e06e1ca22086c164",
-      "bytes": 5483,
+      "sha256": "38891878f5c90daf4be1e15125f24dfea95e04e2edcb9e05087f63be53f66456",
+      "bytes": 5484,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -695,9 +695,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/Settings-Di5zV34O.js",
+      "path": "docs/public/manual/shellx/app/assets/Settings-hLzVtxdf.js",
       "mode": "100644",
-      "sha256": "fc9b5276c3ff55a241d0d6422a27a352ba016bfd1e4ac0cd410460e95f0e7d84",
+      "sha256": "2f73b405c9c997f4618bf77f910fad319fd476d6f9d878b8d9bf250828c6fa34",
       "bytes": 53175,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -706,10 +706,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/shellx-CESBtrKy.js",
+      "path": "docs/public/manual/shellx/app/assets/shellx-Bye1Wj_x.js",
       "mode": "100644",
-      "sha256": "58f852c38240785bd6959212dcbb7b0acf7a9027581f04c371ee290a68355d64",
-      "bytes": 628252,
+      "sha256": "f740fb539262f96313d81a7051629b0667d6a5dcfc07e3fc21add7330a599559",
+      "bytes": 628891,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -750,9 +750,9 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
+      "path": "docs/public/manual/shellx/app/assets/TaskManager-gMZvNctZ.js",
       "mode": "100644",
-      "sha256": "ad24023f673c658fcfa42df8ef2d829ea1022948b3c923a0769690b6ea84827d",
+      "sha256": "35682ba1585417d5252241dac1abead8529fea6aeef6658c4d1328f0486a4a12",
       "bytes": 48442,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -794,10 +794,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
+      "path": "docs/public/manual/shellx/app/assets/VaultPanel-Dodm4tMd.js",
       "mode": "100644",
-      "sha256": "8755378d07b7e5824f4fac11d99f00a6690e2f1e75953898db7c2ee630bac0be",
-      "bytes": 3824,
+      "sha256": "f4fd2cfbb878e980a4d6fa6d69944c1d2dc8c3da96fb1af70e7ee93698e9a5b2",
+      "bytes": 3806,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -860,10 +860,10 @@
       "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public."
     },
     {
-      "path": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
+      "path": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-B5VfQbZv.js",
       "mode": "100644",
-      "sha256": "5df31c8a7af47a6228e3275fab187c6a5576803d5928d512178ea7142157862f",
-      "bytes": 17345,
+      "sha256": "5a076209b6e4f9128a85a2fb7aa7f676ace7ef020b5ba2de3f497f561ab8f277",
+      "bytes": 17102,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -895,7 +895,7 @@
     {
       "path": "docs/public/manual/shellx/app/manual-shellx.html",
       "mode": "100644",
-      "sha256": "9359404d15237742558fe97ba6e4927e30a1d3b02119ea2c40c16d9316850552",
+      "sha256": "2e2fc69fcdec3dd9092dac73efde4c6d6f17bad8c7c729a11eef597452cf6393",
       "bytes": 1123,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -906,8 +906,8 @@
     {
       "path": "docs/public/manual/shellx/content.json",
       "mode": "100644",
-      "sha256": "893ab0b3c961ebe4a972ef75a00d26a2941283ab975670151d5d1872737b1690",
-      "bytes": 80283,
+      "sha256": "bf3836d7ffb26ca07843be8a7baf23fbf0a26dd70f99ce49cc426311d58b23e4",
+      "bytes": 80976,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -917,8 +917,8 @@
     {
       "path": "docs/public/manual/shellx/index.html",
       "mode": "100644",
-      "sha256": "af8242e186fa3ada3894d4076c8ee21ac21025dee8e518263b3c40518b6f36a9",
-      "bytes": 344903,
+      "sha256": "b7a21b534c9af7be4b4bcbd5a12d42b4491f8fcdabd957783eea9d70f8a96788",
+      "bytes": 346938,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -961,7 +961,7 @@
     {
       "path": "docs/public/manual/shellx/publication-manifest.json",
       "mode": "100644",
-      "sha256": "46a01a6419eefe06cd9e7c4dfee209949f8db87f1acf0ea0ff3fbe550d133bf7",
+      "sha256": "43ea09f1b7303e9cb6bf5984419f578afac8678c0979d28181a1fc89af5eb8fc",
       "bytes": 25757,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -972,8 +972,8 @@
     {
       "path": "docs/public/SHELLX_MANUAL.md",
       "mode": "100644",
-      "sha256": "2654872ebdd009246c5c387276c03d20208e19f9749be2c92211749102f6be17",
-      "bytes": 63555,
+      "sha256": "19a611da7c82ab0649aba9bc69f64dd5d2dbbb42605a916e78adca00d7b24f68",
+      "bytes": 64233,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -1049,7 +1049,7 @@
     {
       "path": "package.json",
       "mode": "100644",
-      "sha256": "02a49700c267ec011a6e0ce80e04eb3f7fcfd810c70127e70eaa5bfbffe3b9b8",
+      "sha256": "39c7c9ba318cb111ba4a132bf19de49584fcb273280b5bace2570d3ec61facc1",
       "bytes": 2025,
       "ruleId": "repository-metadata",
       "matchedBy": "projection",
@@ -1082,7 +1082,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "65f41b1a69ed84d0784da14e2e2d9b264d563a21c3844c0e1a9e89a685889e07",
+      "sha256": "1e67a4691060f91ea71cdfcdbf273ada282c052576d5aabb4523cf0b55c7c01d",
       "bytes": 352,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1115,13 +1115,13 @@
     {
       "path": "scripts/public/check-pnpm-audit.mjs",
       "mode": "100644",
-      "sha256": "81dc5f6ac1eeed269a34a2c800a874527c5584ca3220fdadf02b1ef301027041",
+      "sha256": "c8d21631d2ce782e0091ff3642935f2fad19155ba544f14e881a0650910cba76",
       "bytes": 3275,
       "ruleId": "public-script-registry",
       "matchedBy": "registry",
       "matchedPath": "scripts/public/check-pnpm-audit.mjs",
       "category": "public-build-test-tooling",
-      "reason": "Report the raw frontend dependency audit and accept only the reviewed 0.3.62 build-tool advisory."
+      "reason": "Report the raw frontend dependency audit and accept only the reviewed 0.3.63 build-tool advisory."
     },
     {
       "path": "scripts/public/check-rustsec.mjs",
@@ -1192,8 +1192,8 @@
     {
       "path": "scripts/public/public-test-suite-manifest.mjs",
       "mode": "100644",
-      "sha256": "19a4871642b3fbef27427040252dd4d59837c195735f2bf00a85ffba90ecc597",
-      "bytes": 2017,
+      "sha256": "915357ff722f0b26950814f0730c3533bc509f27c8e26e3b464fc574ff816bc5",
+      "bytes": 2077,
       "ruleId": "public-script-registry",
       "matchedBy": "registry",
       "matchedPath": "scripts/public/public-test-suite-manifest.mjs",
@@ -1346,8 +1346,8 @@
     {
       "path": "scripts/public/test-keyboard-accessibility.ts",
       "mode": "100644",
-      "sha256": "24b6de92456f9339cd5619cd6fdbf4bdf799349d3589fcbe0f8c3beff5b4f942",
-      "bytes": 15868,
+      "sha256": "8448193af94734089cc88a48ae68db594f78fcc04a519f04e9e6bffa417a2171",
+      "bytes": 18323,
       "ruleId": "public-script-registry",
       "matchedBy": "registry",
       "matchedPath": "scripts/public/test-keyboard-accessibility.ts",
@@ -1379,13 +1379,13 @@
     {
       "path": "scripts/public/test-pnpm-audit-disposition.mjs",
       "mode": "100644",
-      "sha256": "4c04ad9cb736cbcf345c18435588a72ca3959c257b35060acb51702a1ed10b02",
-      "bytes": 1966,
+      "sha256": "8fc81ff94c02e747c65f57d2ba58bcbc88f7b7b924bfcc5ab15d61b2d18417fc",
+      "bytes": 1998,
       "ruleId": "public-script-registry",
       "matchedBy": "registry",
       "matchedPath": "scripts/public/test-pnpm-audit-disposition.mjs",
       "category": "public-build-test-tooling",
-      "reason": "Test that the 0.3.62 pnpm audit exception rejects changed exposure and unknown vulnerabilities."
+      "reason": "Test that the 0.3.63 pnpm audit exception rejects changed exposure and unknown vulnerabilities."
     },
     {
       "path": "scripts/public/test-provider-capability-snapshot.ts",
@@ -1641,10 +1641,21 @@
       "reason": "Verify windows webview hardening product behavior in public CI."
     },
     {
+      "path": "scripts/public/test-work-preview-frame-url.ts",
+      "mode": "100644",
+      "sha256": "31765ef7feaeb4280e03a8b1b9fed63fcc04d64cac5b527e1094dd23d049e1cc",
+      "bytes": 1256,
+      "ruleId": "public-script-registry",
+      "matchedBy": "registry",
+      "matchedPath": "scripts/public/test-work-preview-frame-url.ts",
+      "category": "public-build-test-tooling",
+      "reason": "Verify embedded Work Preview preserves the original URL, query and fragment across rendering and reload."
+    },
+    {
       "path": "SECURITY.md",
       "mode": "100644",
-      "sha256": "764ae8c338a1f42e815d931ef7abf42609500bb0b1123d3f08fb313fb0ecd012",
-      "bytes": 2927,
+      "sha256": "330f65082e5e6dae9396d9018347d3a11bbaee51708085d0788c4a1c5562a337",
+      "bytes": 3423,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": "SECURITY.md",
@@ -1698,8 +1709,8 @@
     {
       "path": "skills/shellx-host/SKILL.md",
       "mode": "100644",
-      "sha256": "f4adc67c5401813a83f719d78fdd92d2e13de2ce58ca8094865d1dc9d4076322",
-      "bytes": 51543,
+      "sha256": "2e054c8f2145857a05a938f66ea37bc07cb71abd1ace432d4c520d777f73657b",
+      "bytes": 53024,
       "ruleId": "public-agent-resources",
       "matchedBy": "exact",
       "matchedPath": "skills/shellx-host/SKILL.md",
@@ -1742,7 +1753,7 @@
     {
       "path": "src-tauri/Cargo.lock",
       "mode": "100644",
-      "sha256": "b90e1a8eefde2047f2f135e77bb99a5fd6fbaf29f1e40a97265600dc879cb7cb",
+      "sha256": "03a323a2585afed098837a57fa2ddb1f9df1ad6b8c731347ecfa9ec5de5ab228",
       "bytes": 223283,
       "ruleId": "public-native-source",
       "matchedBy": "exact",
@@ -1753,7 +1764,7 @@
     {
       "path": "src-tauri/Cargo.toml",
       "mode": "100644",
-      "sha256": "7e49be84a628ed57cbf202eb47c68a6310104fb67e4ef4a34e388821b67e44a4",
+      "sha256": "be3c6684e33f69154562049bf1e934b58677676cab75cd3903d35a94ae3a39b4",
       "bytes": 13758,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
@@ -2127,8 +2138,8 @@
     {
       "path": "src-tauri/public/tests/inline/build_orchestrator/tests.rs",
       "mode": "100644",
-      "sha256": "f413cafa8f5896a9f08f2dda2ecd009cb5fd816ac3c30b1a813ab2e34bc4279c",
-      "bytes": 81098,
+      "sha256": "d6099a5a295af841965fd57a8667d32e0808305c2ddf457ae641d1edd4be51d1",
+      "bytes": 88712,
       "ruleId": "public-native-product-tests",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -2545,8 +2556,8 @@
     {
       "path": "src-tauri/public/tests/inline/lib/preview_scope_tests.rs",
       "mode": "100644",
-      "sha256": "fad227265904f3ce6ded24eeca54fea91f207cff1fc75bf1c29b887ff1d07c73",
-      "bytes": 6449,
+      "sha256": "86935c8946abaa6b302ffcdfe0b67637b53fb1cc886a92cc22fec2cce91c81ab",
+      "bytes": 8625,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2591,6 +2602,17 @@
       "mode": "100644",
       "sha256": "96bc69127e46f3e346194f91be0c6caa01650a650a89c3a8eb65d9f94c34837a",
       "bytes": 666,
+      "ruleId": "public-native-product-tests",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/public/tests/",
+      "category": "public-product-tests",
+      "reason": "Ordinary deterministic Rust product/security tests and synthetic fixtures used by the standard three-platform public CI; private installed qualification and authenticated canaries are excluded."
+    },
+    {
+      "path": "src-tauri/public/tests/inline/linked_file_write/tests.rs",
+      "mode": "100644",
+      "sha256": "214d161dc8d0204eaa01d5226f8de5fcb9f7df43c8cf9da0bdb69c8ee7cb6979",
+      "bytes": 6284,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2677,8 +2699,8 @@
     {
       "path": "src-tauri/public/tests/inline/mcp_marketplace/tests.rs",
       "mode": "100644",
-      "sha256": "1b1c13648484262f5893dd05590f8894199157c0d0b6035d988ec165cdcdf56c",
-      "bytes": 10023,
+      "sha256": "d851a27711795213aa8ee68ccc68dff1d99b4b964e944d83c6180021e4660935",
+      "bytes": 18869,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2743,8 +2765,8 @@
     {
       "path": "src-tauri/public/tests/inline/provider_adapters/tests.rs",
       "mode": "100644",
-      "sha256": "9afe940dcb3528c24f0216691af0f739e1a77da0d8561b144229f7479799322c",
-      "bytes": 30653,
+      "sha256": "a81a6be7ba3687124f217dc7debea38ab364127a0333b3dfa2a05e89e9d4ebc0",
+      "bytes": 31963,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2754,8 +2776,8 @@
     {
       "path": "src-tauri/public/tests/inline/provider_codex_app_server/tests.rs",
       "mode": "100644",
-      "sha256": "546385f6975957f5bcd656325bb9ea2260f71c8820b07cab04e67f3dabafe5f2",
-      "bytes": 6644,
+      "sha256": "089b779d6c449ec3c9660f77a0d0bbcb0c857f600fb4a228ae828a3b47e466fb",
+      "bytes": 7816,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2765,8 +2787,8 @@
     {
       "path": "src-tauri/public/tests/inline/provider_runtime/tests.rs",
       "mode": "100644",
-      "sha256": "b483dbe605ced3fb3d74f5650a621242ed0d8df62ea61d2d0032cee9db872088",
-      "bytes": 6737,
+      "sha256": "57e9da044b1433e6038ad887eda914db84ab4d4151d0bf031e2d568b3f6bc31c",
+      "bytes": 9149,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -2798,8 +2820,8 @@
     {
       "path": "src-tauri/public/tests/inline/provider_sessions/tests.rs",
       "mode": "100644",
-      "sha256": "70e15f8e5d68c46d915e9d5dd033fb9dc0d975a4bbbf54c42971554ce4b023d9",
-      "bytes": 44888,
+      "sha256": "497b070fc4d2c9be3f2f7c2e003f31fe8718e48479e595eb810c65287a12986e",
+      "bytes": 46311,
       "ruleId": "public-native-product-tests",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -2996,8 +3018,8 @@
     {
       "path": "src-tauri/public/tests/inline/shellx_browser_element_identity/tests.rs",
       "mode": "100644",
-      "sha256": "7f0ecb30fb27d425da72820083b8e505fe8fc1e97519ff4f2302712653b3af87",
-      "bytes": 443,
+      "sha256": "554fe4600245da749acc2412bbf927ddc7437d8f91cfb43de694310cfa0ce8a7",
+      "bytes": 681,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3051,8 +3073,8 @@
     {
       "path": "src-tauri/public/tests/inline/shellx_browser_native_download_cancellation_ack/tests.rs",
       "mode": "100644",
-      "sha256": "cd12c43b0a4c60f3b0e025af0d363aa3d321c0b9e8c3c4991574f5ebc2ba51fa",
-      "bytes": 11959,
+      "sha256": "32af1f3ff5e53065a568ad3519b06fbc9fa704e490c86703ad16917beff8d31f",
+      "bytes": 18479,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3095,8 +3117,8 @@
     {
       "path": "src-tauri/public/tests/inline/shellx_browser_observations/tests.rs",
       "mode": "100644",
-      "sha256": "994e32487d6690dcbed87ec2fda3d430c326db73b4f8dadbd4433933587756e5",
-      "bytes": 2011,
+      "sha256": "7e3688f9790d3147a4e0340c315c58c02c831421d29fb4c470be5c83292ed029",
+      "bytes": 2541,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3293,8 +3315,8 @@
     {
       "path": "src-tauri/public/tests/inline/shellx_browser_transfers/tests.rs",
       "mode": "100644",
-      "sha256": "fbb6eca6c252d287198a1497b69eed70ea922c1537dc878b827909115ba1acf8",
-      "bytes": 9333,
+      "sha256": "fa13699ee16a39c283e5272c1116dc43ae1877f1f49f9eef4a75ec1df2f003c5",
+      "bytes": 9877,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3346,10 +3368,32 @@
       "reason": "Ordinary deterministic Rust product/security tests and synthetic fixtures used by the standard three-platform public CI; private installed qualification and authenticated canaries are excluded."
     },
     {
+      "path": "src-tauri/public/tests/inline/shellx_vault/backend/keyfile_continuity_tests.rs",
+      "mode": "100644",
+      "sha256": "31098c987e3637be12954cbd8e368a686b849cadb2b5f5866d5dbd94e54dac8a",
+      "bytes": 14988,
+      "ruleId": "public-native-product-tests",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/public/tests/",
+      "category": "public-product-tests",
+      "reason": "Ordinary deterministic Rust product/security tests and synthetic fixtures used by the standard three-platform public CI; private installed qualification and authenticated canaries are excluded."
+    },
+    {
       "path": "src-tauri/public/tests/inline/shellx_vault/backend/tests.rs",
       "mode": "100644",
-      "sha256": "16f3b88b3511c433ce20118a0430cd15fbf9d077287d6c9350c3dd2334c1f613",
-      "bytes": 29581,
+      "sha256": "ff4ad6b99d7de610befa44da5003cae9085915e528badf3c5277904d15d8723a",
+      "bytes": 30149,
+      "ruleId": "public-native-product-tests",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/public/tests/",
+      "category": "public-product-tests",
+      "reason": "Ordinary deterministic Rust product/security tests and synthetic fixtures used by the standard three-platform public CI; private installed qualification and authenticated canaries are excluded."
+    },
+    {
+      "path": "src-tauri/public/tests/inline/shellx_vault/grants/tests.rs",
+      "mode": "100644",
+      "sha256": "d6d9e2ed5236616a900ebbaeb6534321be3771b2294f7d0e6eb38b4649c1c339",
+      "bytes": 1950,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3359,8 +3403,8 @@
     {
       "path": "src-tauri/public/tests/inline/skill_install/tests.rs",
       "mode": "100644",
-      "sha256": "11f0dc40ddd6b9dd2e7d12e31e85c7cca56d68ec7ef74f34e8738dcb7a306c92",
-      "bytes": 21587,
+      "sha256": "fc3bba74816a91be19a2678dce42b7a6662b7bd3a6b40c1f4d696b7fc61c27f1",
+      "bytes": 24575,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3524,8 +3568,8 @@
     {
       "path": "src-tauri/public/tests/integration/provider_adapters.rs",
       "mode": "100644",
-      "sha256": "d1d377fe28828dd07ea396a3d8e7fb92943455c74c886488a8347af00719593e",
-      "bytes": 23177,
+      "sha256": "5d20d436974390c689764c54d5a764b9112972b24bfb42078e5125c6c64a812d",
+      "bytes": 24321,
       "ruleId": "public-native-product-tests",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -3744,8 +3788,8 @@
     {
       "path": "src-tauri/public/tests/unit/host_mcp/tests/browser_actions.rs",
       "mode": "100644",
-      "sha256": "02168124105155cecdfa3b30ee6a413d687e33856f8c422e2df64040ad6205ac",
-      "bytes": 35132,
+      "sha256": "e93df46581992a99ab9b9d86666479528754ccfa911c6ff572dcf5aad8c68cfa",
+      "bytes": 39045,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3832,8 +3876,8 @@
     {
       "path": "src-tauri/public/tests/unit/host_mcp/tests/preview_start.rs",
       "mode": "100644",
-      "sha256": "82ecb2cf287a9657b7ef5d7f04846a99e88f62f1abdd48e3cbd2419af62be951",
-      "bytes": 706,
+      "sha256": "54cd5530375e5dece3078307745c0929c0d7fa2a8d329b9b4b81e91eb8abb0e9",
+      "bytes": 2180,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3931,8 +3975,8 @@
     {
       "path": "src-tauri/public/tests/unit/shellx_browser_native_download_tests.rs",
       "mode": "100644",
-      "sha256": "19cefaef52eb2b53603ae23d4d22b32e3b2a00ad64699c3821486455450f1ca3",
-      "bytes": 40606,
+      "sha256": "ac62e2f502a59ad47443c60cee258d5618a7edaa4bfc6b3d482901ee5b13fe7b",
+      "bytes": 46348,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3953,8 +3997,8 @@
     {
       "path": "src-tauri/public/tests/unit/shellx_browser_prompt_guard_tests.rs",
       "mode": "100644",
-      "sha256": "5755f8152ca308cc639bcdec68a65a4b31361fcf6d77157e73e84cc01b913350",
-      "bytes": 11378,
+      "sha256": "5c79e91e756664fba69914827fd5247b482752acafde4664e856a7e6ec6b3abd",
+      "bytes": 11734,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -4250,8 +4294,8 @@
     {
       "path": "src-tauri/public/tests/unit/task_store_tests.rs",
       "mode": "100644",
-      "sha256": "34be1d29a08350c21bc20262aa61024a4b0757fd7130fd0acf7023666a55ff11",
-      "bytes": 25317,
+      "sha256": "c1cafa1eaada1d23ece5679ff1fd55191d71c6ea97b04e56c3014fdead3e665c",
+      "bytes": 32585,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -4283,8 +4327,8 @@
     {
       "path": "src-tauri/src/acp.rs",
       "mode": "100644",
-      "sha256": "e5b6e95af5b91135adc3f9b12a8bb0c915cb6b897723b1aae876d4d64002a71a",
-      "bytes": 278320,
+      "sha256": "5b2d67e8f54e6e678cbcd822937f48f1ca14c295c74fc172ae52a3798b9f9ea7",
+      "bytes": 278652,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -4327,8 +4371,8 @@
     {
       "path": "src-tauri/src/build_orchestrator.rs",
       "mode": "100644",
-      "sha256": "3f5416a066016b853fd31f3c6ff9f8b03bc6326e6e7edcaadc50752ac59a4bca",
-      "bytes": 95746,
+      "sha256": "5f5cb8e5534b21840fe5e37ce8272a4999129d9ee13725b0e7e68d57d1a51899",
+      "bytes": 98111,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -4360,8 +4404,8 @@
     {
       "path": "src-tauri/src/connections.rs",
       "mode": "100644",
-      "sha256": "d1c345417257a4624f7fd8be9824fff416e7eb877ff1f734c2076cbc78ca93ec",
-      "bytes": 52570,
+      "sha256": "6b50f400e86668ba412a854cff4c54f7b8b99105c7d6211f973e1d021fc6d7a1",
+      "bytes": 52899,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -4602,8 +4646,8 @@
     {
       "path": "src-tauri/src/debug_api_goals.rs",
       "mode": "100644",
-      "sha256": "c3199ff47e4be5debb670f0f147401482498a6b40f2cecac065dc0ee8ef4efb9",
-      "bytes": 24254,
+      "sha256": "7b2a1f7d882277292e61ea1f181fa9ed6fc12ff4240f139574b0c9657ecda1d7",
+      "bytes": 24414,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -4778,8 +4822,8 @@
     {
       "path": "src-tauri/src/goal_orchestrator.rs",
       "mode": "100644",
-      "sha256": "1e28886883a9b7bb332ace594bab46b6c2097ccf0fc6c6ac4c34c6f7f7a585f5",
-      "bytes": 89323,
+      "sha256": "ce8ad85d47bea747cb4980d312f0fdc8ea2ce232573b71f274926b95dfdd4bcb",
+      "bytes": 89608,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -4800,8 +4844,8 @@
     {
       "path": "src-tauri/src/host_mcp.rs",
       "mode": "100644",
-      "sha256": "8d3b3a6b4807e8b2a7183f9765092641b6b1e67e0c91419567140e5af1b37baa",
-      "bytes": 59222,
+      "sha256": "2369253ee5075d4eeac0eb438b94bf0eebddbf123b94b82334d459da57680ae7",
+      "bytes": 59585,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -4822,8 +4866,8 @@
     {
       "path": "src-tauri/src/host_mcp/browser_action.rs",
       "mode": "100644",
-      "sha256": "77e6332f2c06de278bb28d5dca049d57f11f561fdec342ee7b326cb20acc6874",
-      "bytes": 17601,
+      "sha256": "e65d36cba0f11f300343065ad12569a98a5f34d8028a6f23ec71553eaa43e6b8",
+      "bytes": 19276,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -4866,8 +4910,8 @@
     {
       "path": "src-tauri/src/host_mcp/browser_output.rs",
       "mode": "100644",
-      "sha256": "d1d5cd7e661c79e054b5d96342f1eed1108b761687fe61fd334ede87c8655d20",
-      "bytes": 22048,
+      "sha256": "ff49e92d8dd033b80ae8969b8f46520316fa3d641e2d498c7ff1909facd1062a",
+      "bytes": 22176,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -4888,8 +4932,8 @@
     {
       "path": "src-tauri/src/host_mcp/browser_specs.rs",
       "mode": "100644",
-      "sha256": "ec154b85ff8a6361d186332cd7db7c188c36863680c1ca1403639f1c6d543d1a",
-      "bytes": 44575,
+      "sha256": "5c9dea40ee7eeaa05177e660d56ec1ab053890aed51501878d3f679de03d5806",
+      "bytes": 44860,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -4965,8 +5009,8 @@
     {
       "path": "src-tauri/src/host_mcp/build_tools.rs",
       "mode": "100644",
-      "sha256": "dffa6ca46731e2fd2ff3cfcc3efef8728bfb81d53204cfde7c7c178e5145944d",
-      "bytes": 24337,
+      "sha256": "8e5b62a501f6ff7f24a767e689874e20281073ad909219397b23c0d1fbfd2c3c",
+      "bytes": 24532,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5097,8 +5141,8 @@
     {
       "path": "src-tauri/src/host_mcp/host_state_tools.rs",
       "mode": "100644",
-      "sha256": "3f33d14c4bc0b2a0e740f18172acf01f4431a652457f3b7e73aed4514a548dd1",
-      "bytes": 12694,
+      "sha256": "fd0c9f7f8a34a3c447fa2fd67af3768158a9c5a26e90bc29e2e4824a9c5d2406",
+      "bytes": 12857,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5196,8 +5240,8 @@
     {
       "path": "src-tauri/src/host_mcp/tool_specs_extended.rs",
       "mode": "100644",
-      "sha256": "e3fa266c244fdf19664db37dc49062cbe367b37bf43d802ad6966e74afca7e52",
-      "bytes": 24364,
+      "sha256": "38793afd8f5a31b24e568943005a40119c096a298c8e28ff653714eaa4dc63c0",
+      "bytes": 24384,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5262,13 +5306,24 @@
     {
       "path": "src-tauri/src/lib.rs",
       "mode": "100644",
-      "sha256": "5baf0de2296fef9cd1ce002dd7c9a4368be9ec68988ed46d1f8d7b4e80018f57",
-      "bytes": 281595,
+      "sha256": "6f81bfcdef937dd94f4bbd27743d228ca86efd45ad1c06bcffe4552cc23503eb",
+      "bytes": 284475,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
       "category": "public-native-source",
       "reason": "ShellX public native application, packaging, and platform source. Developer-only native test support is removed from the public build and runtime-source projection."
+    },
+    {
+      "path": "src-tauri/src/linked_file_write.rs",
+      "mode": "100644",
+      "sha256": "4239fb2b954218690807d72c36899efc307c07b205ba410434b35d6d86276c8e",
+      "bytes": 14047,
+      "ruleId": "public-native-source",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/src/",
+      "category": "public-native-source",
+      "reason": "ShellX public native application, packaging, and platform source."
     },
     {
       "path": "src-tauri/src/loopback_security.rs",
@@ -5350,8 +5405,8 @@
     {
       "path": "src-tauri/src/mcp_marketplace.rs",
       "mode": "100644",
-      "sha256": "1f3a080191bc2931c3fc3762dcc2bc0808126b4a8a91fced2294a1f3227c7f2e",
-      "bytes": 55361,
+      "sha256": "28145413c3474df330b5cdfa04807e4fe323eee21215beed2cee8ecce01af8ca",
+      "bytes": 58010,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5416,8 +5471,8 @@
     {
       "path": "src-tauri/src/provider_adapters.rs",
       "mode": "100644",
-      "sha256": "315ad8066e7b9dc2eef43236a7f317b71c4a48e6cf859b99737643c94471cdac",
-      "bytes": 111962,
+      "sha256": "538b386f172675e6cab866cd8a32b19add4fbd589e1b74d836e17846a99580b2",
+      "bytes": 112707,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5427,8 +5482,8 @@
     {
       "path": "src-tauri/src/provider_codex_app_server.rs",
       "mode": "100644",
-      "sha256": "7973039f675dbb9055ffdce4f99c2be4c7b3282659829bc7f29e8203a8c59f07",
-      "bytes": 12464,
+      "sha256": "2909f8adeed495f86ca20c39ba6a56133338286381f9ffc29abe47ac6f42681d",
+      "bytes": 12465,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5438,8 +5493,8 @@
     {
       "path": "src-tauri/src/provider_runtime.rs",
       "mode": "100644",
-      "sha256": "fb6fa43f75dc9a038182011935ef8f9c828843f97470564742ce88477581c8cd",
-      "bytes": 6457,
+      "sha256": "cd286bf890ba7ce2c77fdba609c7d17992e22cc9473d59f693625166e466cea8",
+      "bytes": 7315,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5449,8 +5504,8 @@
     {
       "path": "src-tauri/src/provider_sessions.rs",
       "mode": "100644",
-      "sha256": "d7272b4f3768dd51cfbad6ea48bdeb25b2fb0b133a87c2511f88c1146345079c",
-      "bytes": 140278,
+      "sha256": "a1b9c571cf239f32c934ba06e680f9c8f47fa3bdb70963359d9d4e2406060fcf",
+      "bytes": 141119,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -5702,8 +5757,8 @@
     {
       "path": "src-tauri/src/shellx_browser_cdp_runtime.rs",
       "mode": "100644",
-      "sha256": "13f3473a3569db8b367d3458b57497801d1142e62eff58205f0d3c14809ee27e",
-      "bytes": 10815,
+      "sha256": "41ff7b8524afbb7d53f0c54945813784ef20d79be54dd0095c0a223615ed4333",
+      "bytes": 11114,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5812,8 +5867,8 @@
     {
       "path": "src-tauri/src/shellx_browser_element_identity.rs",
       "mode": "100644",
-      "sha256": "896f39fc5aa1f96095fd7613a55d0dd5bb060a670b4f79307e91108143dee0a7",
-      "bytes": 6034,
+      "sha256": "69fbe08fd4be6b211879d21f386a66fb32e7bad04b9b4cde30e6f4929c369430",
+      "bytes": 7660,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -5867,8 +5922,8 @@
     {
       "path": "src-tauri/src/shellx_browser_engine_runtime.rs",
       "mode": "100644",
-      "sha256": "eb1b7380e3b90e543e1e9aa43a935e5ee07039ccfe0f3344598d519965ff9466",
-      "bytes": 42479,
+      "sha256": "2f63b1cbf6bd6f04345b0527bdd22882b6b746dda4fd9c2ba1fab54de6230f1c",
+      "bytes": 43766,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6076,8 +6131,8 @@
     {
       "path": "src-tauri/src/shellx_browser_native_download_cancellation_ack.rs",
       "mode": "100644",
-      "sha256": "68f6ac092f1b859a40fc2cb35da7c7df44979f7723f36a35b5b095bfbce2c122",
-      "bytes": 9525,
+      "sha256": "3c8cf2b5bf821ab6141a058837aa4133d27cf8ccff4c1b708bdd9571543c6b2b",
+      "bytes": 10318,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6098,8 +6153,8 @@
     {
       "path": "src-tauri/src/shellx_browser_native_download_lifecycle.rs",
       "mode": "100644",
-      "sha256": "aba47f36fddf8d5e89293489fb85dabf4b25ce4123c9c8942d24dbd5fc3976d8",
-      "bytes": 37235,
+      "sha256": "33e71b2e937b20e364edadadb692425d3b8cb70bc1e1fb58265f18962a271e81",
+      "bytes": 38349,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6120,8 +6175,8 @@
     {
       "path": "src-tauri/src/shellx_browser_native_download_runtime.rs",
       "mode": "100644",
-      "sha256": "6d1c8b06b017dddcadd3cccdd07ab9e45ff62450b3a0d7fd97cab5544469950e",
-      "bytes": 16424,
+      "sha256": "cec139c8e0208d7e920cebd3f5425da7e010ee95ff08ccab8910498bf7a12567",
+      "bytes": 16767,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6153,8 +6208,8 @@
     {
       "path": "src-tauri/src/shellx_browser_native_downloads.rs",
       "mode": "100644",
-      "sha256": "ad515d1e97d7ae57ed63bf9efa7cd8081fac2392910df53dc4a81233ef38f171",
-      "bytes": 19937,
+      "sha256": "ee0dbd6fd7ef2713180f2a9b7dff2db1affaddad8837dcdb4f3012b86725fb7d",
+      "bytes": 25867,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6197,8 +6252,8 @@
     {
       "path": "src-tauri/src/shellx_browser_observations.rs",
       "mode": "100644",
-      "sha256": "2ad49862f7e94a8076c5ff9025d29e1ddd3cefdc6caacb6e63984ae052a631d6",
-      "bytes": 12554,
+      "sha256": "766f655af321064643227340b8b75420215511db22fbd7060cf682a801fa6bed",
+      "bytes": 12358,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6593,8 +6648,8 @@
     {
       "path": "src-tauri/src/shellx_browser_tasks.rs",
       "mode": "100644",
-      "sha256": "c8539e002588e22ee395f6db19b30cb4f40098e1c10a6cad858b189bbb1c03f2",
-      "bytes": 30799,
+      "sha256": "9dc5e31b51e28df25aabfdfdded1ac0caeb564fac1589b63c9617b2010088709",
+      "bytes": 31657,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6692,8 +6747,8 @@
     {
       "path": "src-tauri/src/shellx_browser_transfers.rs",
       "mode": "100644",
-      "sha256": "66adc79ccc2a5ac568668582af5e2d6ff2475f570463d69bbfe3f519e7db57c2",
-      "bytes": 28347,
+      "sha256": "809975e80ecb2e01812bcdf5c07901b3f74fae3c7bf65634773af78ad868ee81",
+      "bytes": 30483,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6780,8 +6835,8 @@
     {
       "path": "src-tauri/src/shellx_vault/backend.rs",
       "mode": "100644",
-      "sha256": "25cec2e32ffa8e75d43345f51638762cf7921328029c5129a8594b2413cf30ac",
-      "bytes": 99427,
+      "sha256": "fe75a4918284530c451afbbf4f446ff4d3177736f785eb3f334cea96519c6901",
+      "bytes": 105347,
       "ruleId": "public-native-source",
       "matchedBy": "projection",
       "matchedPath": null,
@@ -6791,8 +6846,8 @@
     {
       "path": "src-tauri/src/shellx_vault/grants.rs",
       "mode": "100644",
-      "sha256": "b4d4454ea13160ea62f0afe33dd8d361eecc22e12ee596f2de506042a057cb18",
-      "bytes": 1855,
+      "sha256": "aa791f868cf4db9b6efa5ac5dddef313b12fb3cb30d47cbe8110c2498c5c423b",
+      "bytes": 2127,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -6846,8 +6901,8 @@
     {
       "path": "src-tauri/src/skill_install.rs",
       "mode": "100644",
-      "sha256": "f0c26accf3c01005734aabb12fc035b0e3e09f5c3eadfef80a8d81abfb2653c2",
-      "bytes": 47924,
+      "sha256": "a872a392791ba7c1127feffc4c0873ef20455f24f319f906c48a3024c18617a7",
+      "bytes": 48516,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -7022,8 +7077,8 @@
     {
       "path": "src-tauri/src/task_model.rs",
       "mode": "100644",
-      "sha256": "7f3736ad9536e35a70d2e88154b0fc789236be0a4c32521b3278bfb68ded0927",
-      "bytes": 28308,
+      "sha256": "d567672ba74682ea92fc85f76d1e954f0a730c3de58813bde6438d0f409420b3",
+      "bytes": 28936,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -7176,8 +7231,8 @@
     {
       "path": "src-tauri/src/task_store_occurrences.rs",
       "mode": "100644",
-      "sha256": "7313af1db98a206b39180a4a92b8ded0a4894f17ee5f5744fa62cd1d238b8fbc",
-      "bytes": 40109,
+      "sha256": "1faf9fac058b846739d0d15e80515a54bc3b4e5583dc4846dfbea8caec65ab57",
+      "bytes": 44614,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -7187,8 +7242,8 @@
     {
       "path": "src-tauri/src/task_store_persistence.rs",
       "mode": "100644",
-      "sha256": "c35a75982872f9b2b9f9fa650f3121ed9175a7fb9f63141036eca90a52e369dd",
-      "bytes": 23921,
+      "sha256": "79ffd5e1bda8cf6c424e67200f78ae254f912de719c2c9c0f9e475315d7f1f79",
+      "bytes": 25411,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/src/",
@@ -7319,7 +7374,7 @@
     {
       "path": "src-tauri/tauri.conf.json",
       "mode": "100644",
-      "sha256": "42281fff793707119723980975c62f408802f3ce4e1feb7cdd3536489239204d",
+      "sha256": "928e640e34ddfa3e28c06c22b4ddc5f633a056d2153905702090517f536584c2",
       "bytes": 2932,
       "ruleId": "public-native-source",
       "matchedBy": "exact",
@@ -7363,8 +7418,8 @@
     {
       "path": "src/App.tsx",
       "mode": "100644",
-      "sha256": "d13a79259e1f898d8a58b396f53f40b1ee8170bd84b67777516356cb617adf62",
-      "bytes": 304033,
+      "sha256": "ba0a6ac52fb8f1bc3ddb18bf4b824882086ddadbb90c453d223bd51e5d3eef29",
+      "bytes": 303979,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -8232,8 +8287,8 @@
     {
       "path": "src/components/BottomPanel.tsx",
       "mode": "100644",
-      "sha256": "57cc1b44da9a388d78d4ccaa8c24fb26d4bf0e10611e42e14107cbfaa8a9d84b",
-      "bytes": 85197,
+      "sha256": "137352efe9a4a43bed44181166a863a9edf673dba7d5481b140dbf3a36ba7174",
+      "bytes": 85367,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -8243,8 +8298,8 @@
     {
       "path": "src/components/BranchPicker.tsx",
       "mode": "100644",
-      "sha256": "ab025805ce11f9c77689195cf801f9bf1e3d38768447f70bfa726cced507663c",
-      "bytes": 9105,
+      "sha256": "37a2bd4d9d7efbae3b4b154077c04615fc698e951ac57ed65d5ad2bf9de7af81",
+      "bytes": 9218,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -8496,8 +8551,8 @@
     {
       "path": "src/components/HelpModal.tsx",
       "mode": "100644",
-      "sha256": "6745253896e5f964b11a9aec447e5c465ddf2b4f161912824abb48aff3c32ffa",
-      "bytes": 2352,
+      "sha256": "12ff8bec4478066ada893038af984e9db4ecafab1b7b243cd6a5326436b3c6c5",
+      "bytes": 2718,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -8650,8 +8705,8 @@
     {
       "path": "src/components/RightRail.tsx",
       "mode": "100644",
-      "sha256": "40c6c1701048302d6563bd9714f95b161467c828c7660242228660e24f458423",
-      "bytes": 92156,
+      "sha256": "ec277379afd1c3b915ce7adb7cc69c38739f44f475ca78d191ae5793c30ff5b5",
+      "bytes": 93215,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -8969,8 +9024,8 @@
     {
       "path": "src/components/VaultPanel.tsx",
       "mode": "100644",
-      "sha256": "31af152b8250f51ae093407c318e906d13c742686b571a773891a6abd878ec0d",
-      "bytes": 7566,
+      "sha256": "e5241566e181af648af2b61ad38d16ff0e07272d5c5b951e9048c798e348b45f",
+      "bytes": 7533,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -9002,8 +9057,8 @@
     {
       "path": "src/components/WorkPreviewPanel.tsx",
       "mode": "100644",
-      "sha256": "d12af832d8c02f6051e8af5f5a4aa3e9fa60f3eeb0a242406ce476007d9a30cf",
-      "bytes": 29932,
+      "sha256": "bf01d501483a2f2382cad54ac203a7d10c34788e5dc88d1746d114a5e84d5b14",
+      "bytes": 29451,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -9442,8 +9497,8 @@
     {
       "path": "src/lib/provider-sessions.ts",
       "mode": "100644",
-      "sha256": "8fe75ed17fcf5a9c76e96db9aa652fb8c7436c6b7942543f671e20c448cc006e",
-      "bytes": 26820,
+      "sha256": "aa6049ad760e9a41b81648b4ea002e7d66aba731a3584d7daecf440454f4524d",
+      "bytes": 26817,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -9596,8 +9651,8 @@
     {
       "path": "src/lib/shortcuts.ts",
       "mode": "100644",
-      "sha256": "e9b75026243573b1cee4d3568a957bdde4d404940a498df76623a4638af85b5b",
-      "bytes": 7544,
+      "sha256": "03e10acc0b0e20df76ddd933e1594484ac27b45bbf61b89ca50f00190cbefe94",
+      "bytes": 7868,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",

@@ -835,12 +835,17 @@ async fn scan_agent_binary_identity(
 
 async fn scan_agent_version(preset: &ConnectionPreset, binary: &str) -> Option<String> {
     match &preset.transport {
-        Transport::Local { .. } => {
-            run_capture(binary, &["--version"], None, None, Duration::from_secs(5))
-                .await
-                .ok()
-                .and_then(first_output_line)
-        }
+        Transport::Local { .. } => run_capture(
+            binary,
+            &["--version"],
+            None,
+            None,
+            Duration::from_secs(5),
+            true,
+        )
+        .await
+        .ok()
+        .and_then(first_output_line),
         Transport::Wsl { distro, .. } => {
             let script = format!(
                 "{} {} --version",
@@ -1125,6 +1130,7 @@ async fn run_wsl_script(distro: &str, script: &str) -> Result<String, String> {
         None,
         None,
         Duration::from_secs(7),
+        false,
     )
     .await
 }
@@ -1183,6 +1189,7 @@ async fn run_ssh_script(
         None,
         setup_stdin.as_deref(),
         Duration::from_secs(8),
+        false,
     )
     .await
 }
@@ -1209,9 +1216,18 @@ async fn run_capture(
     cwd: Option<&std::path::Path>,
     stdin: Option<&[u8]>,
     timeout: Duration,
+    local_provider: bool,
 ) -> Result<String, String> {
     let mut cmd = Command::new(program);
     cmd.args(args);
+    #[cfg(not(windows))]
+    if local_provider {
+        if let Some(path) = crate::provider_runtime::local_provider_child_path() {
+            cmd.env("PATH", path);
+        }
+    }
+    #[cfg(windows)]
+    let _ = local_provider;
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }

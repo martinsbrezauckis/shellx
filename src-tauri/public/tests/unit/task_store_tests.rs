@@ -479,6 +479,207 @@ fn occurrence_identity_claim_and_completion_are_durable_and_receipt_backed() {
 }
 
 #[test]
+fn active_provider_receipts_outlive_catalogue_without_reopening_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = TaskStore::open(directory.path()).unwrap();
+    let mut task_draft = draft("Long running report", 1);
+    task_draft.timeout_policy.max_run_seconds = 120;
+    let created = store.create(task_draft, false, 10).unwrap();
+    let occurrence = store
+        .create_occurrence(
+            &created.definition.task_id,
+            &created.revision.revision_id,
+            1_000,
+            11,
+        )
+        .unwrap();
+    let claimed = store
+        .claim_occurrence(&occurrence.occurrence_id, "scheduler-1", 120_000, 20)
+        .unwrap();
+    let lease_id = claimed.active_lease.as_ref().unwrap().lease_id.clone();
+    let mut decision = TaskProviderDecisionReceipt {
+        catalogue_snapshot_id: format!("sha256:{}", "c".repeat(64)),
+        catalogue_generated_at_ms: 20,
+        catalogue_fresh_until_ms: 60_020,
+        stage: TaskProviderDecisionStage::Preflight,
+        candidate_order: 1,
+        provider_id: "codex-cli".to_string(),
+        model: TaskModelSelection::ProviderDefault,
+        verdict: TaskProviderDecisionVerdict::Eligible,
+        reason_code: Some("preflightEligible".to_string()),
+        session_id: None,
+    };
+    store
+        .append_provider_decision(
+            &occurrence.occurrence_id,
+            &lease_id,
+            "scheduler-1",
+            decision.clone(),
+            21,
+        )
+        .unwrap();
+    decision.stage = TaskProviderDecisionStage::CommittedStart;
+    decision.verdict = TaskProviderDecisionVerdict::Started;
+    decision.reason_code = Some("providerAccepted".to_string());
+    store
+        .append_provider_decision(
+            &occurrence.occurrence_id,
+            &lease_id,
+            "scheduler-1",
+            decision.clone(),
+            22,
+        )
+        .unwrap();
+    // A one-receipt policy has pruned the start receipt, but the active
+    // attempt's marker must still admit its later provider receipts.
+    {
+        let append = |decision: TaskProviderDecisionReceipt, now_ms| {
+            store.append_provider_decision(
+                &occurrence.occurrence_id,
+                &lease_id,
+                "scheduler-1",
+                decision,
+                now_ms,
+            )
+        };
+
+        // An expired catalogue cannot admit a new route or first provider effect.
+        let mut late_admission = decision.clone();
+        late_admission.stage = TaskProviderDecisionStage::Preflight;
+        late_admission.verdict = TaskProviderDecisionVerdict::Eligible;
+        assert!(matches!(
+            append(late_admission, 60_021),
+            Err(TaskStoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            append(decision.clone(), 60_021),
+            Err(TaskStoreError::Invalid(_))
+        ));
+        let mut future_evidence = decision.clone();
+        future_evidence.catalogue_generated_at_ms = 70_000;
+        future_evidence.catalogue_fresh_until_ms = 130_000;
+        future_evidence.reason_code = Some("providerActivity.toolOrApproval".to_string());
+        assert!(matches!(
+            append(future_evidence, 60_021),
+            Err(TaskStoreError::Invalid(_))
+        ));
+        let mut wrong_catalogue = decision.clone();
+        wrong_catalogue.reason_code = Some("providerActivity.toolOrApproval".to_string());
+        wrong_catalogue.catalogue_snapshot_id = format!("sha256:{}", "d".repeat(64));
+        assert!(matches!(
+            append(wrong_catalogue, 60_021),
+            Err(TaskStoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.append_provider_decision(
+                &occurrence.occurrence_id,
+                &uuid::Uuid::new_v4().to_string(),
+                "scheduler-1",
+                decision.clone(),
+                60_021,
+            ),
+            Err(TaskStoreError::LeaseMismatch)
+        ));
+
+        // The same active lease must still be able to record activity and outcome.
+        decision.reason_code = Some("providerActivity.toolOrApproval".to_string());
+        append(decision.clone(), 60_021).unwrap();
+        decision.stage = TaskProviderDecisionStage::Terminal;
+        decision.verdict = TaskProviderDecisionVerdict::Succeeded;
+        decision.reason_code = Some("succeeded".to_string());
+        append(decision, 60_022).unwrap();
+    }
+    store
+        .complete_occurrence(&occurrence.occurrence_id, &lease_id, "scheduler-1", 60_023)
+        .unwrap();
+    drop(store);
+    TaskStore::open(directory.path()).unwrap();
+}
+
+#[test]
+fn expired_first_activity_and_terminal_cannot_borrow_another_attempt_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = TaskStore::open(directory.path()).unwrap();
+    let created = store.create(draft("Separate runs", 8), false, 10).unwrap();
+    let first = store
+        .create_occurrence(
+            &created.definition.task_id,
+            &created.revision.revision_id,
+            1_000,
+            11,
+        )
+        .unwrap();
+    let first_lease = store
+        .claim_occurrence(&first.occurrence_id, "scheduler-1", 120_000, 20)
+        .unwrap()
+        .active_lease
+        .unwrap()
+        .lease_id;
+    let mut decision = TaskProviderDecisionReceipt {
+        catalogue_snapshot_id: format!("sha256:{}", "c".repeat(64)),
+        catalogue_generated_at_ms: 20,
+        catalogue_fresh_until_ms: 60_020,
+        stage: TaskProviderDecisionStage::CommittedStart,
+        candidate_order: 1,
+        provider_id: "codex-cli".to_string(),
+        model: TaskModelSelection::ProviderDefault,
+        verdict: TaskProviderDecisionVerdict::Started,
+        reason_code: Some("providerAccepted".to_string()),
+        session_id: None,
+    };
+    store
+        .append_provider_decision(
+            &first.occurrence_id,
+            &first_lease,
+            "scheduler-1",
+            decision.clone(),
+            21,
+        )
+        .unwrap();
+    store
+        .complete_occurrence(&first.occurrence_id, &first_lease, "scheduler-1", 22)
+        .unwrap();
+    let second = store
+        .create_occurrence(
+            &created.definition.task_id,
+            &created.revision.revision_id,
+            2_000,
+            23,
+        )
+        .unwrap();
+    let second_lease = store
+        .claim_occurrence(&second.occurrence_id, "scheduler-1", 120_000, 24)
+        .unwrap()
+        .active_lease
+        .unwrap()
+        .lease_id;
+    decision.reason_code = Some("providerActivity.toolOrApproval".to_string());
+    assert!(matches!(
+        store.append_provider_decision(
+            &second.occurrence_id,
+            &second_lease,
+            "scheduler-1",
+            decision.clone(),
+            60_021,
+        ),
+        Err(TaskStoreError::Invalid(_))
+    ));
+    decision.stage = TaskProviderDecisionStage::Terminal;
+    decision.verdict = TaskProviderDecisionVerdict::Succeeded;
+    decision.reason_code = Some("succeeded".to_string());
+    assert!(matches!(
+        store.append_provider_decision(
+            &second.occurrence_id,
+            &second_lease,
+            "scheduler-1",
+            decision,
+            60_021,
+        ),
+        Err(TaskStoreError::Invalid(_))
+    ));
+}
+
+#[test]
 fn manual_occurrence_requires_exact_current_revision_and_persists_before_claim() {
     let directory = tempfile::tempdir().unwrap();
     let store = TaskStore::open(directory.path()).unwrap();

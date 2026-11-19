@@ -52,3 +52,21 @@ fn unchanged_observation_reports_a_compact_empty_delta() {
     assert_eq!(delta.removed_ref_count, 0);
     assert_eq!(delta.updated_ref_count, 0);
 }
+
+#[test]
+fn synthetic_observation_does_not_offer_unrouted_report_action() {
+    let observation = observation_for_task(&task());
+    assert!(observation
+        .refs
+        .iter()
+        .any(|reference| reference.ref_id == "page"));
+    assert!(observation
+        .refs
+        .iter()
+        .any(|reference| reference.ref_id == "address"));
+    assert!(!observation
+        .refs
+        .iter()
+        .any(|reference| reference.ref_id == "report"
+            || reference.action.as_deref() == Some("writeReport")));
+}

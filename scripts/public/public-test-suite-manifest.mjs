@@ -1,5 +1,6 @@
 export const PUBLIC_TEST_SUITE = Object.freeze([
   ["tsx", "scripts/public/test-shellx-debug-paths.ts"],
+  ["tsx", "scripts/public/test-work-preview-frame-url.ts"],
   ["tsx", "scripts/public/test-shellx-sensitive-log-privacy.ts"],
   ["tsx", "scripts/public/test-mcp-http-token-authority.ts"],
   ["tsx", "scripts/public/test-shellx-browser-disposable-profile.ts"],

@@ -137,6 +137,157 @@ fn requested_native_download_for_source(
     (entry.transfer_id, tab.engine_id, binding, source_url)
 }
 
+#[cfg(windows)]
+fn approved_webview2_replay(registry: &ShellxBrowserRegistry) -> (String, String, String, String) {
+    let (transfer_id, engine_id, binding, source_url) = requested_native_download(registry);
+    {
+        let mut state = lock_or_recover(&registry.state);
+        for engine in &mut state.engine_pool.engines {
+            if engine.engine_id == engine_id {
+                engine.url = Some("https://downloads.example.test/work".to_string());
+            }
+        }
+        if state.engine.engine_id == engine_id {
+            state.engine.url = Some("https://downloads.example.test/work".to_string());
+        }
+    }
+    let approval = registry
+        .grant_transfer_for_user(mark_browser_transfer_operator_approved(
+            BrowserTransferApprovalRequest {
+                transfer_id: transfer_id.clone(),
+                direction: "download".to_string(),
+                origin: Some(source_url.clone()),
+                ttl_seconds: Some(300),
+                ..BrowserTransferApprovalRequest::default()
+            },
+        ))
+        .expect("operator approves this exact native transfer");
+    let resume = registry
+        .activate_native_download_approval(&approval)
+        .expect("approved replay can be claimed")
+        .expect("no old cancellation acknowledgement is pending");
+    assert_eq!(resume.transfer_id, transfer_id);
+    assert!(!registry.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        &binding,
+        "https://downloads.example.test/",
+    ));
+    registry
+        .record_native_download_replay_dispatch(&resume)
+        .expect("one exact replay is dispatched");
+    (transfer_id, engine_id, binding, source_url)
+}
+
+#[cfg(windows)]
+#[test]
+fn webview2_multiple_download_permission_is_one_shot_for_the_approved_replay() {
+    let registry = ShellxBrowserRegistry::default();
+    let (transfer_id, engine_id, binding, source_url) = approved_webview2_replay(&registry);
+    assert!(!registry.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        &binding,
+        "https://other.example.test/",
+    ));
+    assert!(!registry.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        "retired-binding",
+        "https://downloads.example.test/",
+    ));
+    assert!(registry.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        &binding,
+        "https://downloads.example.test/",
+    ));
+    assert!(!registry.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        &binding,
+        "https://downloads.example.test/",
+    ));
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].replay_phase,
+        NativeDownloadReplayPhase::InReplay
+    );
+    // The native permission is only an entry gate. A different URL cannot
+    // consume the approved transfer in the subsequent download callback.
+    assert!(matches!(
+        registry.native_download_requested(
+            &engine_id,
+            &binding,
+            "https://downloads.example.test/other.csv",
+            Some("other.csv"),
+        ),
+        BrowserNativeDownloadRequested::RecordIntent { .. }
+    ));
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].source_url,
+        source_url
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn webview2_multiple_download_permission_rejects_unapproved_stale_and_finished_replays() {
+    let registry = ShellxBrowserRegistry::default();
+    let (transfer_id, engine_id, binding, _) = requested_native_download(&registry);
+    let origin = "https://downloads.example.test/";
+    assert!(
+        !registry.claim_webview2_native_download_replay_permission(&engine_id, &binding, origin)
+    );
+    {
+        let mut state = lock_or_recover(&registry.state);
+        let permit = state.native_download_permits.get_mut(&transfer_id).unwrap();
+        permit.status = NativeDownloadPermitStatus::InProgress;
+        permit.replay_phase = NativeDownloadReplayPhase::InReplay;
+    }
+    assert!(
+        !registry.claim_webview2_native_download_replay_permission(&engine_id, &binding, origin)
+    );
+
+    let approved = ShellxBrowserRegistry::default();
+    let (_, engine_id, binding, _) = approved_webview2_replay(&approved);
+    assert!(!approved.claim_webview2_native_download_replay_permission(
+        &engine_id,
+        &binding,
+        "https://downloads.example.test:444/",
+    ));
+    {
+        let mut state = lock_or_recover(&approved.state);
+        let engine = state
+            .engine_pool
+            .engines
+            .iter_mut()
+            .find(|engine| engine.engine_id == engine_id)
+            .expect("bound engine exists");
+        engine.url = Some("https://other.example.test/work".to_string());
+    }
+    assert!(
+        !approved.claim_webview2_native_download_replay_permission(&engine_id, &binding, origin,)
+    );
+    {
+        let mut state = lock_or_recover(&approved.state);
+        state
+            .engine_pool
+            .engines
+            .iter_mut()
+            .find(|engine| engine.engine_id == engine_id)
+            .expect("bound engine exists")
+            .url = Some("https://downloads.example.test/work".to_string());
+        state
+            .engine_event_contexts
+            .get_mut(&engine_id)
+            .expect("bound context exists")
+            .current
+            .browser_tab_id = Some("different-tab".to_string());
+    }
+    assert!(
+        !approved.claim_webview2_native_download_replay_permission(&engine_id, &binding, origin,)
+    );
+    approved.begin_engine_event_binding(&engine_id);
+    assert!(
+        !approved.claim_webview2_native_download_replay_permission(&engine_id, &binding, origin,)
+    );
+}
+
 #[test]
 fn requested_native_download_declines_before_execution_even_after_its_binding_is_retired() {
     let registry = ShellxBrowserRegistry::default();

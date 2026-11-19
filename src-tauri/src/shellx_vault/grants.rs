@@ -17,11 +17,24 @@ pub enum GrantOperation {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum GrantScope {
-    Agent { agent_id: String },
-    Provider { provider_id: String },
-    Workspace { workspace: String },
-    BrowserOrigin { origin: String },
-    Connector { connector_id: String },
+    Agent {
+        #[serde(alias = "agentId")]
+        agent_id: String,
+    },
+    Provider {
+        #[serde(alias = "providerId")]
+        provider_id: String,
+    },
+    Workspace {
+        workspace: String,
+    },
+    BrowserOrigin {
+        origin: String,
+    },
+    Connector {
+        #[serde(alias = "connectorId")]
+        connector_id: String,
+    },
     AllShellxAgents,
 }
 
@@ -67,3 +80,7 @@ pub enum GrantDecision {
     AllowRawReveal,
     Deny { reason: String },
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/shellx_vault/grants/tests.rs"]
+mod tests;

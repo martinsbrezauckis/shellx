@@ -340,7 +340,7 @@ fn claude_success_result_is_provider_stream_terminal() {
     let event = normalize_claude_line(
         "run-1",
         "tab-1",
-        r#"{"type":"result","subtype":"success","usage":{"input_tokens":1,"output_tokens":2}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"already streamed","usage":{"input_tokens":1,"output_tokens":2}}"#,
     )
     .expect("claude result event");
 
@@ -348,6 +348,44 @@ fn claude_success_result_is_provider_stream_terminal() {
     assert_eq!(terminal.phase, ProviderRunPhase::Completed);
     assert_eq!(terminal.exit_code, Some(0));
     assert_eq!(terminal.error, None);
+    assert_eq!(event.kind, ProviderSessionEventKind::Raw);
+    assert_eq!(event.text, None);
+}
+
+#[test]
+fn claude_success_subtype_with_error_flag_fails_and_surfaces_safe_error() {
+    let event = normalize_claude_line(
+        "run-1",
+        "tab-1",
+        r#"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate: login expired","usage":{"input_tokens":0,"output_tokens":0}}"#,
+    )
+    .expect("Claude error result");
+
+    assert_eq!(event.kind, ProviderSessionEventKind::Failed);
+    assert_eq!(event.status, Some(ProviderEventStatus::Failed));
+    assert_eq!(
+        event.error.as_deref(),
+        Some("Failed to authenticate: login expired")
+    );
+    let terminal = provider_stream_terminal_from_event(&event).expect("terminal signal");
+    assert_eq!(terminal.phase, ProviderRunPhase::Failed);
+    assert_eq!(terminal.error, event.error);
+}
+
+#[test]
+fn claude_error_result_redacts_credential_shaped_message() {
+    let event = normalize_claude_line(
+        "run-1",
+        "tab-1",
+        r#"{"type":"result","subtype":"success","is_error":true,"result":"authorization: bearer eyJ12345678901234567890"}"#,
+    )
+    .expect("Claude error result");
+
+    assert_eq!(event.kind, ProviderSessionEventKind::Failed);
+    assert_eq!(
+        event.error.as_deref(),
+        Some("<redacted: credential-shaped provider error>")
+    );
 }
 
 #[test]

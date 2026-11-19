@@ -15,7 +15,7 @@ const report = {
 const accepted = {
   report,
   exitStatus: 1,
-  packageVersion: "0.3.62",
+  packageVersion: "0.3.63",
   lockText: "vite@6.4.6\npicomatch@4.0.7",
   now: new Date("2026-11-18T00:00:00Z"),
 };
@@ -24,8 +24,9 @@ for (const mutation of [
   { report: { ...report, advisories: { ...report.advisories, unknown: { ...advisory, github_advisory_id: "GHSA-new" } } } },
   { report: { ...report, advisories: { "1247710": { ...advisory, findings: [{ version: "4.0.8", paths: [".>vite>picomatch"] }] } } } },
   { report: { ...report, advisories: { "1247710": { ...advisory, findings: [{ version: "4.0.7", paths: [".>runtime>picomatch"] }] } } } },
-  { packageVersion: "0.3.63" },
-  { now: new Date("2026-12-18T00:00:00Z") },
+  { packageVersion: "0.3.62" },
+  { packageVersion: "0.3.64" },
+  { now: new Date("2026-12-19T00:00:00Z") },
   { lockText: "vite@7.0.0\npicomatch@4.0.7" },
   { report: { ...report, muted: ["GHSA-new"] } },
   { exitStatus: 2 },
@@ -41,7 +42,7 @@ assert.equal(evaluatePnpmAuditReport({
   ...accepted,
   report: { advisories: {}, muted: [] },
   exitStatus: 0,
-  packageVersion: "0.3.63",
+  packageVersion: "0.3.64",
   lockText: "updated dependencies",
   now: new Date("2027-01-01T00:00:00Z"),
 }), "pnpm audit: no reported advisories", "a clean later release needs no expired exception");

@@ -1,6 +1,26 @@
-import{f as t,j as e,S as c}from"./LazySurface-EcW3B_n5.js";import{T as d,M as p,a as u,b as h}from"./shellx-CESBtrKy.js";import{u as w}from"./useModalFocus-BdgPt4s6.js";import"./task-teach-handoff-events-B2JD3vZe.js";const m=`# Changelog
+import{f as t,j as e,S as c}from"./LazySurface-EcW3B_n5.js";import{V as d,M as p,a as u,b as h}from"./shellx-Bye1Wj_x.js";import{u as w}from"./useModalFocus-BdgPt4s6.js";import"./task-teach-handoff-events-B2JD3vZe.js";const m=`# Changelog
 
 All notable public changes to shellX are documented here.
+
+## [0.3.63] - 2026-11-19
+
+### Fixed
+
+- Updated Codex Default sessions to use its supported approval policy while
+  retaining the workspace sandbox.
+- Show Claude CLI errors instead of reporting an empty session as completed.
+- Kept first-time Vault setup retryable after an interrupted confirmation.
+- Let Build Mode recheck continue after its missing checkpoint is supplied.
+- Fixed external marketplace Python tools failing to start from the Linux
+  AppImage's bundled environment.
+- Clarified native Browser tool routes and errors when document policy
+  prevents inspection.
+- Improved reliability of approved Browser downloads on macOS and Windows.
+- Kept Browser approvals tied to the current control and Preview diagnostics
+  tied to the requesting session.
+- Prevented Vault keyfile changes that would make existing encrypted data
+  unreadable.
+- Hardened writes to linked project goal and history files.
 
 ## [0.3.62] - 2026-11-17
 

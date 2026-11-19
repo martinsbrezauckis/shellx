@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vault_client::client::Api;
 use vault_client::items::{self, VaultItem};
-use vault_core::{Keyfile, MasterKey};
+use vault_core::{Keyfile, MasterKey, Snapshot};
 
 use crate::shellx_vault::grants::{
     GrantActorContext, GrantDecision, GrantOperation, GrantRequest, GrantScope, GrantSummary,
@@ -565,6 +565,48 @@ impl Default for ShellxVaultBackend {
     }
 }
 
+// Read-only proof that a candidate master can open this repository's head.
+// An empty repository supplies no proof of master identity.
+async fn verify_vault_head_with_master(api: &Api, master: &MasterKey) -> Result<bool, String> {
+    let Some(head) = api
+        .head()
+        .await
+        .map_err(|e| format!("Vault continuity check failed: {e}"))?
+    else {
+        return Ok(false);
+    };
+    let sealed = api
+        .get_manifest(head.generation)
+        .await
+        .map_err(|e| format!("Vault continuity check failed: {e}"))?;
+    if hex::encode(Snapshot::sealed_id(&sealed)) != head.id {
+        return Err("Vault continuity check found a mismatched head manifest".into());
+    }
+    Snapshot::open(master, &sealed)
+        .map_err(|_| "selected keyfile cannot open existing Vault data".to_string())?;
+    Ok(true)
+}
+
+fn same_vault_destination(
+    existing: &VaultProfile,
+    target: &SetupTarget,
+    server_url: Option<&str>,
+    repo: &str,
+) -> bool {
+    if existing.repo != repo {
+        return false;
+    }
+    match (existing.mode.clone(), target) {
+        (ShellxVaultMode::Local, SetupTarget::Local) => true,
+        (ShellxVaultMode::External, SetupTarget::External) => existing
+            .server_url
+            .as_deref()
+            .zip(server_url)
+            .is_some_and(|(old, new)| old.trim_end_matches('/') == new.trim_end_matches('/')),
+        _ => false,
+    }
+}
+
 impl ShellxVaultBackend {
     pub(crate) fn profile_dir(&self) -> &Path {
         &self.profile_dir
@@ -672,6 +714,17 @@ impl ShellxVaultBackend {
             return Err("external vault requires serverUrl".into());
         }
         let _transition = self.state_transition.lock().await;
+        // A damaged existing profile must not turn a setup change into a fresh
+        // Vault. The candidate remains in memory until continuity is proven.
+        let existing_profile = match read_persisted_profile(&self.profile_path()) {
+            Ok(profile) => Some(profile),
+            Err(_) if matches!(fs::metadata(self.profile_path()), Err(ref error) if error.kind() == std::io::ErrorKind::NotFound) => {
+                None
+            }
+            Err(err) => {
+                return Err(format!("Vault profile load failed: {err}"));
+            }
+        };
         let kit = generate_recovery_kit();
         let mode = match request.target {
             SetupTarget::Local => ShellxVaultMode::Local,
@@ -688,12 +741,12 @@ impl ShellxVaultBackend {
                 .map(|token| token.trim().is_empty())
                 .unwrap_or(true)
         {
-            read_persisted_profile(&self.profile_path())
-                .ok()
+            existing_profile
+                .as_ref()
                 .filter(|profile| {
                     matches!(profile.mode, ShellxVaultMode::Local) && profile.recovery.confirmed
                 })
-                .and_then(|profile| profile.token)
+                .and_then(|profile| profile.token.clone())
         } else {
             None
         };
@@ -707,6 +760,14 @@ impl ShellxVaultBackend {
                 &request.passphrase,
             )
             .await?;
+        self.verify_setup_key_continuity(
+            existing_profile.as_ref(),
+            &request,
+            server_url.as_deref(),
+            &session,
+            keyfile_to_publish.is_some(),
+        )
+        .await?;
         let (remembered_keyfile_json, remembered_device_secret) = if remember_device {
             let primary_keyfile_json = keyfile_json
                 .as_deref()
@@ -901,8 +962,6 @@ impl ShellxVaultBackend {
         let supplied_keyfile_json = keyfile_json
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let should_read_published_keyfile =
-            !matches!(target, SetupTarget::Local) || self.profile_path().exists();
         let (master, keyfile_json, keyfile_to_publish) = match supplied_keyfile_json {
             Some(raw) => {
                 let keyfile: Keyfile = serde_json::from_str(raw)
@@ -912,13 +971,11 @@ impl ShellxVaultBackend {
                     .map_err(|_| "wrong Vault passphrase or corrupted keyfile".to_string())?;
                 (master, raw.to_string(), Some(raw.to_string()))
             }
-            None => match if should_read_published_keyfile {
-                api.get_keyfile()
-                    .await
-                    .map_err(|e| format!("Vault keyfile fetch failed: {e}"))?
-            } else {
-                None
-            } {
+            None => match api
+                .get_keyfile()
+                .await
+                .map_err(|e| format!("Vault keyfile fetch failed: {e}"))?
+            {
                 Some(published) => {
                     let raw = String::from_utf8(published)
                         .map_err(|_| "published Vault keyfile is not valid UTF-8".to_string())?;
@@ -950,6 +1007,98 @@ impl ShellxVaultBackend {
                 device: format!("shellx-{}", std::env::consts::OS),
             },
         ))
+    }
+
+    async fn verify_setup_key_continuity(
+        &self,
+        existing: Option<&VaultProfile>,
+        request: &SetupRequest,
+        server_url: Option<&str>,
+        candidate: &VaultBridgeSession,
+        will_publish_keyfile: bool,
+    ) -> Result<(), String> {
+        // Never publish over an occupied destination whose data the candidate
+        // cannot read, including a first-time import into an existing server.
+        let occupied = verify_vault_head_with_master(&candidate.api, &candidate.master).await?;
+        let destination_keyfile_matches = if !occupied && will_publish_keyfile {
+            match candidate
+                .api
+                .get_keyfile()
+                .await
+                .map_err(|e| format!("Vault keyfile continuity check failed: {e}"))?
+            {
+                Some(raw) => {
+                    let published: Keyfile = serde_json::from_slice(&raw)
+                        .map_err(|_| "published Vault keyfile is not valid JSON".to_string())?;
+                    Some(published.unlock(&request.passphrase).is_ok_and(|master| {
+                        master.manifest_key() == candidate.master.manifest_key()
+                    }))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let Some(existing) = existing else {
+            return if destination_keyfile_matches == Some(false) {
+                Err("selected keyfile cannot verify the existing Vault keyfile".into())
+            } else {
+                Ok(())
+            };
+        };
+
+        // A blank, unconfigured profile does not establish a master key.
+        if matches!(existing.mode, ShellxVaultMode::Unconfigured) && existing.keyfile_json.is_none()
+        {
+            return if destination_keyfile_matches == Some(false) {
+                Err("selected keyfile cannot verify the destination Vault keyfile".into())
+            } else {
+                Ok(())
+            };
+        }
+        // Switching to an independent repository must not be tied to the old
+        // repository's master. Its own occupied head was checked above.
+        if !same_vault_destination(
+            existing,
+            &request.target,
+            server_url,
+            request.repo.as_deref().unwrap_or("default"),
+        ) {
+            return if matches!(existing.mode, ShellxVaultMode::Unconfigured) {
+                Err("existing Vault keyfile has no destination to verify".into())
+            } else if destination_keyfile_matches == Some(false) {
+                Err("selected keyfile cannot verify the destination Vault keyfile".into())
+            } else {
+                Ok(())
+            };
+        }
+        if occupied {
+            return Ok(());
+        }
+
+        if let Some(active) = self.session.lock().await.as_ref() {
+            if active.master.manifest_key() == candidate.master.manifest_key() {
+                return Ok(());
+            }
+            return Err("selected keyfile does not match the existing Vault master key".into());
+        }
+
+        // An empty repository has no authenticated manifest. The saved
+        // keyfile can prove continuity only when this passphrase opens it.
+        let raw = existing
+            .keyfile_json
+            .as_deref()
+            .ok_or("existing empty Vault has no keyfile to verify")?;
+        let keyfile: Keyfile = serde_json::from_str(raw)
+            .map_err(|_| "existing Vault keyfile is not valid JSON".to_string())?;
+        let previous = keyfile.unlock(&request.passphrase).map_err(|_| {
+            "existing empty Vault master key cannot be verified; unlock the existing Vault first"
+                .to_string()
+        })?;
+        if previous.manifest_key() != candidate.master.manifest_key() {
+            return Err("selected keyfile does not match the existing Vault master key".into());
+        }
+        Ok(())
     }
 
     fn profile_path(&self) -> PathBuf {

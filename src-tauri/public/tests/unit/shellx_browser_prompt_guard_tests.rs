@@ -109,6 +109,18 @@ fn hostile_visible_content_blocks_before_mutation_without_retaining_content() {
     assert_eq!(response.receipt.kind, "browserPromptInjectionBlocked");
     assert_eq!(response.receipt.evidence["inboundContentVerdict"], "block");
     assert_eq!(response.receipt.evidence["proposedActionVerdict"], "allow");
+    let summary = response
+        .step_summary
+        .as_ref()
+        .expect("blocked step summary");
+    assert!(summary
+        .recovery_hints
+        .iter()
+        .any(|hint| hint.contains("ShellX operator")));
+    assert!(!summary
+        .next_actions
+        .iter()
+        .any(|action| action == "findText" || action == "writeReport"));
     let serialized = serde_json::to_string(&response.receipt).expect("receipt serializes");
     assert!(!serialized.contains(marker));
     assert!(!serialized.contains("send credentials"));

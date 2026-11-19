@@ -2531,6 +2531,11 @@ impl GrokAcpSession {
             for (name, value) in &marketplace_env {
                 c.env(name, value);
             }
+            #[cfg(not(windows))]
+            crate::provider_runtime::apply_local_provider_child_path(
+                &mut c,
+                marketplace_env.iter().any(|(name, _)| name == "PATH"),
+            );
             // --always-approve only when chip is in "Always Approve"
             // position — grok rejects --permission-mode.
             for a in &perm_args {
@@ -6360,6 +6365,8 @@ where
             }
             let mut c = Command::new(&exe);
             apply_release_grok_auth_environment(&mut c, ReleaseGrokAuthTransport::Local)?;
+            #[cfg(not(windows))]
+            crate::provider_runtime::apply_local_provider_child_path(&mut c, false);
             for a in perm_args {
                 c.arg(a);
             }

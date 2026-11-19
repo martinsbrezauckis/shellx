@@ -32,13 +32,18 @@ export function isCmd(e: KeyboardEvent): boolean {
   return isMac ? e.metaKey : e.ctrlKey;
 }
 
+/** Render the registry's Mac chord using the current platform's command key. */
+export function shortcutKeysForPlatform(keys: string, platform = typeof navigator === "undefined" ? "" : navigator.platform): string {
+  return /Mac|iPhone|iPad/.test(platform) ? keys : keys.replaceAll("⌘", "Ctrl+");
+}
+
 /** A registered shortcut. */
 export interface ShortcutDef {
  /** Stable id for tests + help modal sort. */
   id: string;
  /** Group label for HelpModal section. */
   group: "Navigation" | "Sessions" | "Editing" | "Autonomy" | "Diff";
- /** Human-readable key combo shown in the help modal. */
+ /** Mac-form key combo; HelpModal formats the command key for the host OS. */
   keys: string;
  /** One-line description. */
   desc: string;

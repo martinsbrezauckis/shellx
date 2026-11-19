@@ -86,6 +86,7 @@ pub mod subagent;
 // set_goal_mode / get_goal_state / pause_goal / resume_goal are wired
 // into invoke_handler below.
 pub mod goal_orchestrator;
+mod linked_file_write;
 // Vault integration and provider-specific installation of the ShellX host skill.
 pub mod shellx_vault;
 pub mod skill_install;
@@ -230,6 +231,7 @@ pub(crate) mod shellx_browser_workflow_taxonomy;
 pub(crate) mod webview_runtime_paths;
 
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Manager, State};
 use tokio::time::{timeout, Duration};
@@ -1384,7 +1386,9 @@ async fn drop_tab_session(
     build_orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
     process_registry: State<'_, Arc<ProcessRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
+    operator_preview_roots: State<'_, Arc<OperatorPreviewRoots>>,
 ) -> Result<bool, String> {
+    operator_preview_roots.clear(&tab_id);
     cleanup_normal_tab_session(
         &tab_id,
         registry.inner().clone(),
@@ -1471,6 +1475,71 @@ fn effective_preview_session_cwd(
         let _ = frontend_cwd;
         registry_cwd
     }
+}
+
+/// A local folder picked in the native OS dialog is operator authority for
+/// file preview in a disconnected tab. Renderer-supplied cwd never writes here.
+#[derive(Default)]
+struct OperatorPreviewRoots(Mutex<HashMap<String, String>>);
+
+impl OperatorPreviewRoots {
+    fn set(&self, tab_id: String, root: String) {
+        self.0.lock().unwrap().insert(tab_id, root);
+    }
+
+    fn get(&self, tab_id: &str) -> Option<String> {
+        self.0.lock().unwrap().get(tab_id).cloned()
+    }
+
+    fn clear(&self, tab_id: &str) {
+        self.0.lock().unwrap().remove(tab_id);
+    }
+}
+
+fn operator_preview_cwd(
+    ctx: &AssetCopyContext,
+    tab_id: &str,
+    roots: &OperatorPreviewRoots,
+) -> Option<String> {
+    if ctx.registry_cwd.is_none() && ctx.ssh_config.is_none() && ctx.wsl_distro.is_none() {
+        roots.get(tab_id)
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+async fn pick_local_preview_folder(
+    #[allow(non_snake_case)] tab_id: String,
+    #[allow(non_snake_case)] default_path: Option<String>,
+    app: AppHandle,
+    roots: State<'_, Arc<OperatorPreviewRoots>>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt as _;
+
+    if tab_id.trim().is_empty() {
+        return Err("preview folder requires a tab id".to_string());
+    }
+    let mut dialog = app.dialog().file();
+    if let Some(path) = default_path.filter(|value| !value.trim().is_empty()) {
+        dialog = dialog.set_directory(path);
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    dialog.pick_folder(move |picked| {
+        let _ = sender.send(picked);
+    });
+    let picked = receiver
+        .await
+        .map_err(|_| "preview folder dialog closed unexpectedly".to_string())?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    let canonical = path.canonicalize().map_err(|e| e.to_string())?;
+    if !canonical.is_dir() {
+        return Err("selected preview folder is not a directory".to_string());
+    }
+    let root = strip_windows_extended_path_prefix(&canonical.to_string_lossy());
+    roots.set(tab_id, root.clone());
+    Ok(Some(root))
 }
 
 fn non_empty_string(v: Option<String>) -> Option<String> {
@@ -1687,6 +1756,7 @@ async fn read_text_file_for_path(
     #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
+    operator_preview_roots: State<'_, Arc<OperatorPreviewRoots>>,
 ) -> Result<String, String> {
     let path = strip_windows_extended_path_prefix(&path);
     if path.is_empty() {
@@ -1700,7 +1770,8 @@ async fn read_text_file_for_path(
     let tab_key = tab_id_or_default(tab_id);
     let preview_ctx =
         preview_session_context(&registry, Some(provider_registry.inner()), &tab_key).await;
-    let session_cwd = effective_preview_session_cwd(preview_ctx.registry_cwd.clone(), session_cwd);
+    let session_cwd = effective_preview_session_cwd(preview_ctx.registry_cwd.clone(), session_cwd)
+        .or_else(|| operator_preview_cwd(&preview_ctx, &tab_key, &operator_preview_roots));
 
     // UNC-prefix strip — mirror of read_image_as_data_url so a
     // Windows-side picker result against a WSL cwd still matches.
@@ -1805,8 +1876,17 @@ async fn read_preview_file_as_data_url(
     #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
+    operator_preview_roots: State<'_, Arc<OperatorPreviewRoots>>,
 ) -> Result<String, String> {
-    read_image_as_data_url(path, tab_id, session_cwd, registry, provider_registry).await
+    read_image_as_data_url(
+        path,
+        tab_id,
+        session_cwd,
+        registry,
+        provider_registry,
+        operator_preview_roots,
+    )
+    .await
 }
 
 /// Grok writes images to
@@ -1829,6 +1909,7 @@ async fn read_image_as_data_url(
     #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
+    operator_preview_roots: State<'_, Arc<OperatorPreviewRoots>>,
 ) -> Result<String, String> {
     let path = strip_windows_extended_path_prefix(&path);
     if path.is_empty() {
@@ -1841,7 +1922,8 @@ async fn read_image_as_data_url(
     let tab_key = tab_id_or_default(tab_id);
     let preview_ctx =
         preview_session_context(&registry, Some(provider_registry.inner()), &tab_key).await;
-    let session_cwd = effective_preview_session_cwd(preview_ctx.registry_cwd.clone(), session_cwd);
+    let session_cwd = effective_preview_session_cwd(preview_ctx.registry_cwd.clone(), session_cwd)
+        .or_else(|| operator_preview_cwd(&preview_ctx, &tab_key, &operator_preview_roots));
 
     // Allow if EITHER
     // (a) path is anchored under ~/.grok/ (grok-generated content), OR
@@ -6583,6 +6665,7 @@ pub fn run() {
         // don't yet pass a tab_id.
         .manage(session_registry.clone())
         .manage(provider_session_registry.clone())
+        .manage(Arc::new(OperatorPreviewRoots::default()))
         .manage(process_registry.clone())
         .manage(terminal_registry.clone())
         .manage(shellx_browser_registry.clone())
@@ -6652,6 +6735,7 @@ pub fn run() {
             rename_past_session,
             get_home_dir,
             read_text_file_for_path,
+            pick_local_preview_folder,
             open_url_in_browser,
             manual_deep_link::manual_deep_link_take_pending_main,
             git_branches,

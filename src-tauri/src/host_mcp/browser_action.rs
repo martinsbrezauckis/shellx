@@ -11,6 +11,7 @@ pub(super) fn browser_action_schema_properties() -> Value {
     json!({
         "browserTabId": { "type": "string", "description": "Optional ShellX Browser tab id." },
         "taskId": { "type": "string", "description": "Optional ShellX Browser task id. If omitted together with browserTabId, agent-facing Browser tools create or reuse a caller-bound task-disposable task. Pass an explicit taskId to join an existing cowork task; browserTabId always requires taskId." },
+        "expectedDomains": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "For navigate without taskId, create a caller-bound task scoped to these explicit domains. An existing taskId keeps its established scope." },
         "selector": { "type": "string", "description": "Optional CSS selector target or scope." },
         "refId": { "type": "string", "description": "Optional ref id returned by browser_observe." },
         "value": { "type": "string", "description": "String value for fill, wait, or verify actions." },
@@ -144,6 +145,37 @@ pub(super) fn browser_action_body(action: &str, args: Value) -> Result<Value, St
     );
     browser_insert_optional_string(&mut body, &args, "taskId", &["taskId", "task_id", "task"]);
     browser_insert_optional_string(&mut body, &args, "url", &["url"]);
+    if action == "navigate" {
+        if let Some(domains) = args
+            .get("expectedDomains")
+            .or_else(|| args.get("expected_domains"))
+        {
+            let domains = domains.as_array().ok_or_else(|| {
+                "browser navigate expectedDomains must be an array of strings".to_string()
+            })?;
+            if domains.len() > 20
+                || domains.iter().any(|domain| {
+                    domain
+                        .as_str()
+                        .map(str::trim)
+                        .is_none_or(|domain| domain.is_empty() || domain.len() > 253)
+                })
+            {
+                return Err(
+                    "browser navigate expectedDomains supports up to 20 non-empty domain strings"
+                        .to_string(),
+                );
+            }
+            body.insert(
+                "expectedDomains".to_string(),
+                json!(domains
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .collect::<Vec<_>>()),
+            );
+        }
+    }
     browser_insert_optional_string(&mut body, &args, "selector", &["selector"]);
     browser_insert_optional_string(&mut body, &args, "refId", &["refId", "ref_id", "ref"]);
     browser_insert_optional_string(&mut body, &args, "value", &["value"]);
@@ -218,6 +250,13 @@ pub(super) fn browser_action_body_has_explicit_target(body: &Value) -> bool {
             .is_some_and(|value| !value.is_empty())
 }
 
+pub(super) fn browser_action_requests_fresh_scoped_task(body: &Value) -> bool {
+    body.get("expectedDomains")
+        .and_then(Value::as_array)
+        .is_some_and(|domains| !domains.is_empty())
+        && !browser_action_body_has_explicit_target(body)
+}
+
 pub(super) fn browser_insert_task_id_into_body(body: &mut Value, task_id: &str) {
     if let Some(object) = body.as_object_mut() {
         object.insert("taskId".to_string(), json!(task_id));
@@ -272,6 +311,20 @@ pub(super) fn browser_agent_task_goal_for_action(action: &str, body: &Value) -> 
     }
 }
 
+pub(super) fn browser_agent_task_start_body(action: &str, body: &Value) -> Value {
+    let mut start_body = json!({
+        "goal": browser_agent_task_goal_for_action(action, body),
+        "profileId": "task-disposable",
+        "autonomy": "assistedAutonomous",
+    });
+    if let Some(expected_domains) = body.get("expectedDomains").and_then(Value::as_array) {
+        if !expected_domains.is_empty() {
+            start_body["expectedDomains"] = json!(expected_domains);
+        }
+    }
+    start_body
+}
+
 pub(super) async fn browser_ensure_agent_task_target(
     action: &str,
     body: &mut Value,
@@ -281,35 +334,22 @@ pub(super) async fn browser_ensure_agent_task_target(
     if browser_action_body_has_explicit_target(body) {
         return Ok(());
     }
-    if let Ok(state) = debug_api_get_json_for_caller(
-        "/browser/tasks?detail=summary&limit=200",
-        timeout_secs,
-        caller_session_id,
-    )
-    .await
-    {
-        if let Some(task_id) = browser_state_agent_task_id_for_caller(&state, caller_session_id) {
-            browser_insert_task_id_into_body(body, &task_id);
-            return Ok(());
+    if !browser_action_requests_fresh_scoped_task(body) {
+        if let Ok(state) = debug_api_get_json_for_caller(
+            "/browser/tasks?detail=summary&limit=200",
+            timeout_secs,
+            caller_session_id,
+        )
+        .await
+        {
+            if let Some(task_id) = browser_state_agent_task_id_for_caller(&state, caller_session_id)
+            {
+                browser_insert_task_id_into_body(body, &task_id);
+                return Ok(());
+            }
         }
     }
-    let mut start_body = json!({
-        "goal": browser_agent_task_goal_for_action(action, body),
-        "profileId": "task-disposable",
-        "autonomy": "assistedAutonomous",
-    });
-    if let Some(expected_domains) = body.get("expectedDomains").and_then(Value::as_array) {
-        let expected_domains = expected_domains
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        if !expected_domains.is_empty() {
-            start_body["expectedDomains"] = json!(expected_domains);
-        }
-    }
+    let start_body = browser_agent_task_start_body(action, body);
     let task = debug_api_post_json_for_caller(
         "/browser/task/start",
         &start_body,

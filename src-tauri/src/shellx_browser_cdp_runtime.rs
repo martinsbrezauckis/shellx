@@ -84,6 +84,9 @@ pub(crate) async fn eval_browser_engine_json(
         .await
         .map_err(|_| BROWSER_ENGINE_EVAL_TIMEOUT.to_string())?
         .map_err(|_| "Browser engine eval callback dropped".to_string())?;
+    if raw.trim().is_empty() {
+        return Err("Browser inspection unavailable: the page returned no evaluation result. The document may restrict script execution or still be loading. Check its load state and use an allowed content-read route when inspection is unavailable.".to_string());
+    }
     serde_json::from_str(&raw).map_err(|e| {
         format!(
             "Browser engine eval returned invalid JSON: {}; raw={}",

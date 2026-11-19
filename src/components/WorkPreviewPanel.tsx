@@ -532,10 +532,8 @@ export function WorkPreviewStage({
   const [browserIssueCount, setBrowserIssueCount] = useState(0);
   const [lastBrowserIssue, setLastBrowserIssue] = useState<WorkPreviewBrowserEvent | null>(null);
   const frameRevision = effective.startedAtMs ?? effective.updatedAtMs;
-  const frameSrc = useMemo(
-    () => effective.url ? cacheBustPreviewUrl(effective.url, frameRevision, frameReloadSeq) : null,
-    [effective.url, frameRevision, frameReloadSeq],
-  );
+  const frameSrc = effective.url;
+  const frameKey = `${frameSrc ?? ""}-${frameRevision}-${frameReloadSeq}`;
 
   useEffect(() => {
     setViewport(defaultViewport);
@@ -695,7 +693,7 @@ export function WorkPreviewStage({
             >
               <div className={`work-preview-device work-preview-device-${viewport}`}>
                 <iframe
-                  key={frameSrc}
+                  key={frameKey}
                   className="work-preview-stage-frame"
                   title="Work preview"
                   src={frameSrc ?? undefined}
@@ -737,15 +735,4 @@ function normalizePreviewBrowserEvent(data: Record<string, unknown>): WorkPrevie
     column: typeof data.column === "number" ? data.column : null,
     stack: typeof data.stack === "string" ? data.stack : null,
   };
-}
-
-function cacheBustPreviewUrl(url: string, updatedAtMs: number, reloadSeq: number): string {
-  try {
-    const next = new URL(url);
-    next.searchParams.set("__shellx_preview", `${updatedAtMs}-${reloadSeq}`);
-    return next.toString();
-  } catch {
-    const joiner = url.includes("?") ? "&" : "?";
-    return `${url}${joiner}__shellx_preview=${encodeURIComponent(`${updatedAtMs}-${reloadSeq}`)}`;
-  }
 }

@@ -2,9 +2,9 @@
 
 # ShellX Manual
 
-Version: 0.3.62
+Version: 0.3.63
 
-Updated: 2026-11-17
+Updated: 2026-11-18
 
 ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.
 
@@ -439,7 +439,7 @@ The folder pill selects the tab's working directory. Confirm it before granting 
 
 <a id="shellx.interface.composer.branch"></a>
 
-The branch picker shows and changes Git branches for the active working directory while preserving the tab's connection frame.
+The branch picker selects a reference branch for the tab. It does not switch Git HEAD or the agent working folder. Use the Git panel to create a separate worktree, then select its folder for the tab before connecting an agent.
 
 ### Command palette: Connect agent session
 
@@ -638,6 +638,7 @@ Connectors configures supported outside messaging surfaces and shows their avail
 1. Delivery and Session chat approval are independent: choosing Session chat preserves Review first by default, while Auto-dispatch is a separate explicit choice.
 2. For Telegram, allowlisting a group chat authorizes every participant in that group; keep per-message approval enabled or use a private chat when Session chat can dispatch agent work.
 3. Discord Session chat accepts allowlisted direct-message user IDs rather than channel or guild IDs.
+4. Enabled, allowlist, and approval settings govern admission of new inbound messages. An already accepted Auto-dispatch handoff may complete after those settings change unless its work is separately cancelled; changing connector settings does not promise retroactive cancellation.
 
 ### Settings: Desktop
 
@@ -1127,7 +1128,7 @@ ShellX-launched sessions receive compact host guidance and, when enabled, sessio
 
 ShellX coding-agent sessions run in provider-native Full Auto.
 
-1. Treat Full Auto as project-scoped trust, not blanket machine approval.
+1. Choose a trusted project folder and execution environment. The working folder provides context; Full Auto uses provider-native bypass flags and does not establish an operating-system sandbox.
 2. Operator-gated Browser and Vault actions remain separately gated even when the coding provider is automated.
 3. Use a trusted project folder and environment because provider-native shell and file tools can execute without ShellX confirmation prompts.
 
@@ -1143,7 +1144,7 @@ Confirmed ShellX sessions can receive tab-bound host tools for status, Browser, 
 4. When ShellX tooling exposure is enabled, WSL and SSH agents use the WSL relay or SSH reverse tunnel to reach the parent desktop host for ShellX tools, including Cut.
 5. Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.
 6. For a workflow or Trace export requested by an agent, use that caller's task and Browser tab. ShellX refuses an unbound, foreign, or mismatched target.
-7. Keep the current remote-cwd and parent-host distinction in mind: provider-native file tools operate in the selected target, while ShellX host tools operate on the desktop host under ShellX policy.
+7. Provider-native tools execute in the selected Local, WSL, or SSH target. Enabled ShellX host tools operate on the parent desktop host: file tools can reach allowed files within that host’s home directory outside the project, while process and diagnostic tools have their own declared host scope. Expose these capabilities only to trusted agents and remote environments.
 8. Use mutating host tools only when the ShellX UI and active tab make the authority visible.
 
 ## Integrated Browser

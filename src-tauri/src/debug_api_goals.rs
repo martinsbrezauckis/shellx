@@ -137,7 +137,12 @@ pub(super) async fn plan_write(
         // Use forward slash for portability — works on Windows + WSL.
         format!("{}/plan.md", cwd.trim_end_matches(['/', '\\']))
     };
-    match std::fs::write(&path, body.text.as_bytes()) {
+    let cwd = info.get("cwd").and_then(|v| v.as_str()).unwrap_or_default();
+    match crate::linked_file_write::in_place_under(
+        Path::new(cwd),
+        Path::new(&path),
+        body.text.as_bytes(),
+    ) {
         Ok(()) => {
             let bytes = body.text.len();
             // Emit plan-event so right-rail refreshes. Reuse the existing

@@ -4,6 +4,8 @@
 //! Keep user-local provider directories in one place so inventory, version
 //! probes, provider launches, terminals, and Windows OpenSSH agree.
 
+#[cfg(not(windows))]
+use std::ffi::OsString;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
@@ -111,6 +113,37 @@ pub(crate) fn local_provider_search_dirs() -> Vec<PathBuf> {
         }
     }
     dirs
+}
+
+#[cfg(not(windows))]
+pub(crate) fn local_provider_child_path() -> Option<OsString> {
+    posix_provider_child_path_in_dirs(&local_provider_search_dirs())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn apply_local_provider_child_path(
+    command: &mut tokio::process::Command,
+    explicit_path: bool,
+) {
+    apply_local_provider_child_path_value(command, explicit_path, local_provider_child_path());
+}
+
+#[cfg(not(windows))]
+fn apply_local_provider_child_path_value(
+    command: &mut tokio::process::Command,
+    explicit_path: bool,
+    path: Option<OsString>,
+) {
+    if !explicit_path {
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn posix_provider_child_path_in_dirs(dirs: &[PathBuf]) -> Option<OsString> {
+    std::env::join_paths(dirs).ok()
 }
 
 fn platform_extensions() -> Vec<String> {

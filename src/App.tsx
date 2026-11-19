@@ -546,7 +546,7 @@ interface TabEntry {
   agentId?: AgentSelection;
   /** Per-tab ShellX host-tool exposure for provider sessions. */
   shellxToolExposure?: ProviderShellxToolExposure;
-  /** Branch name displayed in the Branch pill. */
+  /** Reference branch displayed in the Branch pill; it does not change cwd or Git HEAD. */
   branchName?: string;
   /** Ahead-count shown as ↑N badge on the Branch pill. */
   branchAhead?: number;
@@ -1992,13 +1992,10 @@ export default function App(): JSX.Element {
     if (!options.force && (completedAutoScanKeys.current.get(requestKey) ?? 0) > Date.now()) return;
     if (scanRequestKeys.current.has(requestKey)) return;
     scanRequestKeys.current.add(requestKey);
-    pushUiEvent(`→ scanning agent CLIs for ${preset.label}`);
     void scanConnectionProviderCapabilities(preset)
       .then((snapshot) => {
         handleProviderScanUpdated(preset, snapshot.providers);
         completedAutoScanKeys.current.set(requestKey, snapshot.freshUntilMs);
-        const ready = snapshot.providers.filter((provider) => providerScanStatus(provider) === "ready").length;
-        pushUiEvent(`✓ ${preset.label}: ${ready} agent CLI${ready === 1 ? "" : "s"} ready`);
       })
       .catch((err) => {
         pushUiEvent(`✗ agent CLI scan failed for ${preset.label}: ${err}`);
@@ -6280,14 +6277,15 @@ export default function App(): JSX.Element {
                           });
                           return;
                         }
-                        const selected = await openShellxDialog({
-                          directory: true,
-                          multiple: false,
+                        const targetTabId = activeTab?.tabId ?? activeTabId;
+                        if (!targetTabId) return;
+                        const selected = await invoke<string | null>("pick_local_preview_folder", {
+                          tabId: targetTabId,
                           defaultPath: activeTab?.cwd ?? cwd,
                         });
                         if (!selected || typeof selected !== "string") return;
-                        updateActiveTab({ cwd: selected });
-                        setCwd(selected);
+                        updateTabById(targetTabId, { cwd: selected });
+                        if (activeTabIdRef.current === targetTabId) setCwd(selected);
                       } catch (err) {
                         pushUiEvent(`✗ pick-folder failed: ${err}`);
                       }

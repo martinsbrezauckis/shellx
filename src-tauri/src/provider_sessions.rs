@@ -21,7 +21,7 @@ use codex_app_server_runtime::{
 use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
 pub use crate::provider_adapters::ProviderShellxToolExposure;
 use crate::provider_adapters::{
-    apply_provider_command_env, build_provider_command_with_options,
+    apply_provider_spawn_environment, build_provider_command_with_options,
     extract_provider_conversation_id, normalize_provider_cwd_for_execution,
     normalize_provider_ssh_cwd_for_target, prepare_provider_shellx_tooling,
     provider_spawn_command_parts, resolve_provider_ssh_key_path, validate_provider_command_cwd,
@@ -2131,7 +2131,12 @@ async fn start_provider_session_with_command(
     if let Some(cwd_path) = command_cwd.as_deref() {
         cmd.current_dir(cwd_path);
     }
-    apply_provider_command_env(&mut cmd, &spawn_program, &command.env);
+    apply_provider_spawn_environment(
+        &mut cmd,
+        &spawn_program,
+        &command.env,
+        matches!(command.execution, ProviderExecutionTransport::Local),
+    );
     crate::winproc::apply_pdeathsig_preexec(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(child) => child,
@@ -3341,30 +3346,45 @@ fn normalize_claude_line(run_id: &str, tab_id: &str, line: &str) -> Option<Provi
         "assistant" => normalize_claude_assistant(run_id, tab_id, &value),
         "result" => {
             let subtype = value.get("subtype").and_then(|v| v.as_str());
+            // Claude can report subtype=success for a provider error. The
+            // is_error field is authoritative for this result's outcome.
+            let failed = subtype != Some("success")
+                || value.get("is_error").and_then(|v| v.as_bool()) == Some(true);
+            let error = failed
+                .then(|| {
+                    value
+                        .get("result")
+                        .and_then(|v| v.as_str())
+                        .filter(|text| !text.trim().is_empty())
+                        .map(str::to_string)
+                        .or_else(|| summarize_value(&value))
+                })
+                .flatten()
+                .map(|text| {
+                    if crate::host_mcp::redact_if_credential_pattern(&text) {
+                        "<redacted: credential-shaped provider error>".to_string()
+                    } else {
+                        text.chars().take(300).collect()
+                    }
+                });
             let mut event = provider_event(
                 ProviderId::ClaudeCode,
                 run_id,
                 tab_id,
-                if subtype == Some("success") {
-                    ProviderSessionEventKind::Raw
-                } else {
+                if failed {
                     ProviderSessionEventKind::Failed
-                },
-                if subtype == Some("success") {
-                    None
                 } else {
-                    summarize_value(&value)
+                    ProviderSessionEventKind::Raw
                 },
+                error.clone(),
                 Some("result".to_string()),
             );
-            event.status = Some(if subtype == Some("success") {
-                ProviderEventStatus::Completed
-            } else {
+            event.status = Some(if failed {
                 ProviderEventStatus::Failed
+            } else {
+                ProviderEventStatus::Completed
             });
-            event.error = (subtype != Some("success"))
-                .then(|| event.text.clone())
-                .flatten();
+            event.error = error;
             apply_provider_usage(&mut event, &value);
             Some(event)
         }

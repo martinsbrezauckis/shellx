@@ -95,7 +95,6 @@ export function VaultPanel({
         request: {
           passphrase,
           keyfileJson: null,
-          rememberDevice: false,
         },
       });
       setPassphrase("");

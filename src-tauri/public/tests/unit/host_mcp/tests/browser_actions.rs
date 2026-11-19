@@ -1,4 +1,8 @@
 use super::super::*;
+use crate::host_mcp::browser_action::{
+    browser_action_body_has_explicit_target, browser_action_requests_fresh_scoped_task,
+    browser_agent_task_start_body, browser_state_agent_task_id_for_caller,
+};
 
 #[test]
 fn browser_tool_catalog_has_a_measured_serialized_budget() {
@@ -14,6 +18,26 @@ fn browser_tool_catalog_has_a_measured_serialized_budget() {
         bytes <= 6_000,
         "advertised Browser catalog is {bytes} bytes"
     );
+}
+
+#[test]
+fn compact_browser_guidance_names_only_routed_agent_actions() {
+    let specs = browser_entry_tool_specs();
+    let read = &specs[0];
+    let act = &specs[1];
+    let read_actions = read["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("browser_read actions");
+    let act_actions = act["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("browser_act actions");
+    assert!(!read_actions.iter().any(|action| action == "findText"));
+    assert!(act_actions.iter().any(|action| action == "runSteps"));
+    assert!(!act_actions.iter().any(|action| action == "writeReport"));
+    let read_description = read["description"].as_str().expect("read description");
+    let act_description = act["description"].as_str().expect("act description");
+    assert!(read_description.contains("findText is only a step"));
+    assert!(act_description.contains("Host MCP cannot approve it"));
 }
 
 #[test]
@@ -534,6 +558,78 @@ fn browser_action_body_rejects_taskless_browser_tab_targeting() {
     )
     .expect_err("agent MCP calls must not target a tab without task context");
     assert!(err.contains("browserTabId must also pass the owning taskId"));
+}
+
+#[test]
+fn browser_navigate_preserves_bounded_explicit_scope_for_auto_task_creation() {
+    let body = browser_action_body(
+        "navigate",
+        json!({
+            "url": "http://127.0.0.1:8766/",
+            "expectedDomains": [" 127.0.0.1 "]
+        }),
+    )
+    .expect("explicit local scope parses");
+    assert_eq!(body["expectedDomains"], json!(["127.0.0.1"]));
+    assert!(!browser_action_body_has_explicit_target(&body));
+    assert!(browser_action_requests_fresh_scoped_task(&body));
+    let start = browser_agent_task_start_body("navigate", &body);
+    assert_eq!(start["profileId"], json!("task-disposable"));
+    assert_eq!(start["expectedDomains"], json!(["127.0.0.1"]));
+    assert_eq!(start["autonomy"], json!("assistedAutonomous"));
+    let existing = browser_action_body(
+        "navigate",
+        json!({
+            "taskId": "existing-task",
+            "url": "http://127.0.0.1:8766/",
+            "expectedDomains": ["127.0.0.1"]
+        }),
+    )
+    .expect("existing task remains explicit");
+    assert!(!browser_action_requests_fresh_scoped_task(&existing));
+    assert_eq!(existing["taskId"], json!("existing-task"));
+    assert!(
+        crate::shellx_browser_security::validate_browser_navigation_target(
+            "http://127.0.0.1:8766/",
+            &[],
+            &[],
+            "task-disposable",
+            true,
+        )
+        .is_err()
+    );
+    assert!(
+        crate::shellx_browser_security::validate_browser_navigation_target(
+            "http://127.0.0.1:8766/",
+            &["127.0.0.1".to_string()],
+            &[],
+            "task-disposable",
+            true,
+        )
+        .is_ok()
+    );
+
+    let caller_tasks = json!({ "tasks": [
+        { "taskId": "another-owner", "ownerSessionId": "session-b", "profileId": "task-disposable", "status": "running", "updatedAtMs": 99 },
+        { "taskId": "caller-pending", "ownerSessionId": "session-a", "profileId": "task-disposable", "status": "waitingApproval", "updatedAtMs": 10 }
+    ] });
+    assert_eq!(
+        browser_state_agent_task_id_for_caller(&caller_tasks, Some("session-a")),
+        Some("caller-pending".to_string())
+    );
+    assert!(browser_action_requests_fresh_scoped_task(&body));
+    assert_eq!(caller_tasks["tasks"][1]["status"], json!("waitingApproval"));
+
+    for invalid in [
+        json!({ "expectedDomains": "127.0.0.1" }),
+        json!({ "expectedDomains": [""] }),
+        json!({ "expectedDomains": [23] }),
+        json!({ "expectedDomains": vec!["example.test"; 21] }),
+    ] {
+        let mut args = invalid.as_object().unwrap().clone();
+        args.insert("url".to_string(), json!("http://127.0.0.1:8766/"));
+        assert!(browser_action_body("navigate", Value::Object(args)).is_err());
+    }
 }
 
 #[test]

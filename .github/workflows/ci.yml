@@ -94,7 +94,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify pnpm audit disposition fails closed
         run: node scripts/public/test-pnpm-audit-disposition.mjs
-      - name: Full pnpm audit with exact 0.3.62 disposition
+      - name: Full pnpm audit with exact 0.3.63 disposition
         run: node scripts/public/check-pnpm-audit.mjs
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

@@ -172,7 +172,7 @@ pub fn body_sha256_hex(body: &str) -> String {
 ///
 /// Returns Ok(true) on write, Ok(false) when bytes already match,
 /// Err(...) on IO failure.
-fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
+fn ensure_installed_at(root: &Path, path: &Path, body: &str) -> Result<bool, String> {
     info!(
         target: "skill_install",
         "ensuring shellx-host skill manifest at {}",
@@ -231,7 +231,8 @@ fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
     // Step 3: write. std::fs::write opens-truncate-write-close; on the
     // failure path the partial write surfaces as an Err here so the
     // caller can decide whether to retry on next boot.
-    std::fs::write(path, body).map_err(|e| format!("write to {} failed: {}", path.display(), e))?;
+    crate::linked_file_write::in_place_under(root, path, body.as_bytes())
+        .map_err(|e| format!("write to {} failed: {}", path.display(), e))?;
     info!(
         target: "skill_install",
         "shellx-host skill installed ({} bytes)",
@@ -444,18 +445,6 @@ pub fn ensure_project_mcp_http_config(
     let dir = project_dir.join(".grok");
     let path = dir.join("config.toml");
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
-    let artifact_exclude_changed = match ensure_project_mcp_artifact_git_excludes(project_dir) {
-        Ok(changed) => changed,
-        Err(e) => {
-            warn!(
-                "project MCP artifact git exclude install failed at {} (non-fatal): {}",
-                project_dir.display(),
-                e
-            );
-            false
-        }
-    };
-
     let mut new_section = crate::mcp_http::http_config_snippet_toml(port, token, tab_id);
     let extra_mcp_config = extra_mcp_config.trim();
     if !extra_mcp_config.is_empty() {
@@ -481,21 +470,28 @@ pub fn ensure_project_mcp_http_config(
     }
     updated.push_str(&new_section);
 
-    if updated == existing {
-        return Ok(artifact_exclude_changed);
+    let config_changed = updated != existing;
+    if config_changed {
+        crate::linked_file_write::in_place_private_under(project_dir, &path, updated.as_bytes())?;
+        info!(
+            "project .grok/config.toml updated at {} ({} bytes)",
+            path.display(),
+            updated.len()
+        );
     }
-    std::fs::write(&path, &updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-    info!(
-        "project .grok/config.toml updated at {} ({} bytes)",
-        path.display(),
-        updated.len()
-    );
-    Ok(true)
+    // A rejected linked config must not still mutate the user's Git excludes.
+    let artifact_exclude_changed = match ensure_project_mcp_artifact_git_excludes(project_dir) {
+        Ok(changed) => changed,
+        Err(e) => {
+            warn!(
+                "project MCP artifact git exclude install failed at {} (non-fatal): {}",
+                project_dir.display(),
+                e
+            );
+            false
+        }
+    };
+    Ok(config_changed || artifact_exclude_changed)
 }
 
 fn ensure_project_mcp_artifact_git_excludes(project_dir: &Path) -> Result<bool, String> {
@@ -785,13 +781,14 @@ pub fn ensure_user_agents_md_shellx_section() -> Result<bool, String> {
     if new_content == existing {
         return Ok(false);
     }
-    std::fs::write(&path, &new_content).map_err(|e| {
-        format!(
-            "ensure_user_agents_md_shellx_section: write {} failed: {}",
-            path.display(),
-            e
-        )
-    })?;
+    crate::linked_file_write::in_place_under(Path::new(&home), &path, new_content.as_bytes())
+        .map_err(|e| {
+            format!(
+                "ensure_user_agents_md_shellx_section: write {} failed: {}",
+                path.display(),
+                e
+            )
+        })?;
     info!(
         "ensure_user_agents_md_shellx_section: removed global ShellX guidance from {} ({} bytes remain)",
         path.display(),
@@ -865,7 +862,11 @@ pub fn cleanup_wsl_agents_md(distro: &str, linux_home: &str) -> Result<bool, Str
     if updated == existing {
         return Ok(false);
     }
-    std::fs::write(&dst, updated).map_err(|e| format!("write {}: {}", dst.display(), e))?;
+    let root = dst
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("WSL Grok guidance has no home root")?;
+    crate::linked_file_write::in_place_under(root, &dst, updated.as_bytes())?;
     Ok(true)
 }
 
@@ -880,7 +881,11 @@ const MCP_END_NEEDLE: &str = "shellX:managed-mcp:grok-shell-host END";
 /// direct Grok sessions.
 pub fn cleanup_global_grok_host_mcp_config() -> Result<bool, String> {
     let path = grok_config_path()?;
-    cleanup_grok_host_mcp_config_at(&path)
+    let root = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("Grok config has no home root")?;
+    cleanup_grok_host_mcp_config_at(root, &path)
 }
 
 /// Remove the same legacy account-wide registration from a specific WSL
@@ -893,7 +898,11 @@ pub fn cleanup_wsl_grok_host_mcp_config(distro: &str, linux_home: &str) -> Resul
         &format!("{}/.grok/config.toml", linux_home.trim_end_matches('/')),
     )
     .ok_or("cleanup_wsl_grok_host_mcp_config: cannot build UNC path".to_string())?;
-    cleanup_grok_host_mcp_config_at(&path)
+    let root = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("WSL Grok config has no home root")?;
+    cleanup_grok_host_mcp_config_at(root, &path)
 }
 
 /// Remove only ShellX-owned host MCP registrations from a project's Grok
@@ -901,10 +910,10 @@ pub fn cleanup_wsl_grok_host_mcp_config(distro: &str, linux_home: &str) -> Resul
 /// `session/new`, so leaving a project block behind would make a later direct
 /// Grok launch discover ShellX tooling outside a ShellX tab.
 pub fn cleanup_project_grok_host_mcp_config(project_dir: &Path) -> Result<bool, String> {
-    cleanup_grok_host_mcp_config_at(&project_dir.join(".grok").join("config.toml"))
+    cleanup_grok_host_mcp_config_at(project_dir, &project_dir.join(".grok").join("config.toml"))
 }
 
-fn cleanup_grok_host_mcp_config_at(path: &Path) -> Result<bool, String> {
+fn cleanup_grok_host_mcp_config_at(root: &Path, path: &Path) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
@@ -933,7 +942,7 @@ fn cleanup_grok_host_mcp_config_at(path: &Path) -> Result<bool, String> {
     if updated == existing {
         return Ok(false);
     }
-    std::fs::write(path, &updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    crate::linked_file_write::in_place_under(root, path, updated.as_bytes())?;
     info!(
         target: "skill_install",
         "removed legacy global ShellX host MCP registration from {}",
@@ -982,6 +991,7 @@ fn find_managed_block_range(source: &str) -> Option<(usize, usize)> {
 
 pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
     let targets = shellx_host_skill_install_targets()?;
+    let home = user_home_dir().ok_or("cannot resolve host skill home directory")?;
     /* Symlink TOCTOU defence.
      * Before delegating to `ensure_installed_at`, canonicalize the parent
      * dir (creating it first if missing) and verify the resolved path
@@ -998,7 +1008,7 @@ pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
     let mut errors = Vec::<String>::new();
     for target in targets {
         match validate_skill_install_parent(&target.path)
-            .and_then(|()| ensure_installed_at(&target.path, BUNDLED_SKILL_BODY))
+            .and_then(|()| ensure_installed_at(&home, &target.path, BUNDLED_SKILL_BODY))
         {
             Ok(wrote) => {
                 installed_count += 1;

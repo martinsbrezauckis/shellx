@@ -1850,7 +1850,7 @@ fn push_codex_root_permission(args: &mut Vec<String>, mode: &ProviderPermissionM
             args.push("--sandbox".to_string());
             args.push("workspace-write".to_string());
             args.push("-a".to_string());
-            args.push("untrusted".to_string());
+            args.push("on-request".to_string());
         }
         ProviderPermissionMode::AcceptEdits => {
             args.push("--sandbox".to_string());
@@ -2273,6 +2273,7 @@ pub async fn run_provider_adapter(
         timeout,
         &command.env,
         command.setup_stdin.as_slice(),
+        matches!(command.execution, ProviderExecutionTransport::Local),
     )
     .await;
     let (stdout, stderr, exit_code, duration_ms, error) = match output {
@@ -2579,6 +2580,7 @@ async fn detect_version(program: &str) -> Option<String> {
         Some(&cwd),
         Duration::from_secs(5),
         &[],
+        true,
     )
     .await
     .ok()?;
@@ -2676,9 +2678,10 @@ async fn detect_provider_version(binary: &str, probe: &ProviderProbeContext<'_>)
                 "-lc".to_string(),
                 command,
             ];
-            let out = run_command_capture("wsl.exe", &args, None, Duration::from_secs(5), &[])
-                .await
-                .ok()?;
+            let out =
+                run_command_capture("wsl.exe", &args, None, Duration::from_secs(5), &[], false)
+                    .await
+                    .ok()?;
             out.stdout
                 .lines()
                 .chain(out.stderr.lines())
@@ -2739,9 +2742,10 @@ async fn resolve_provider_binary(
                     "-lc".to_string(),
                     command,
                 ];
-                let out = run_command_capture("wsl.exe", &args, None, Duration::from_secs(5), &[])
-                    .await
-                    .ok()?;
+                let out =
+                    run_command_capture("wsl.exe", &args, None, Duration::from_secs(5), &[], false)
+                        .await
+                        .ok()?;
                 let path = out.stdout.trim();
                 if !path.is_empty() {
                     return Some(path.to_string());
@@ -2837,7 +2841,7 @@ async fn run_ssh_probe_command(
         ssh_wsl_distro,
         remote_command,
     )?;
-    run_command_capture("ssh", &args, None, timeout, &[]).await
+    run_command_capture("ssh", &args, None, timeout, &[], false).await
 }
 
 fn first_non_empty_line(text: &str) -> Option<String> {
@@ -2853,8 +2857,10 @@ async fn run_command_capture(
     cwd: Option<&Path>,
     timeout: Duration,
     env: &[ProviderCommandEnvVar],
+    local_provider: bool,
 ) -> Result<CommandRunOutput, String> {
-    run_command_capture_with_setup_stdin(program, args, cwd, timeout, env, &[]).await
+    run_command_capture_with_setup_stdin(program, args, cwd, timeout, env, &[], local_provider)
+        .await
 }
 
 async fn run_command_capture_with_setup_stdin(
@@ -2864,6 +2870,7 @@ async fn run_command_capture_with_setup_stdin(
     timeout: Duration,
     env: &[ProviderCommandEnvVar],
     setup_stdin: &[u8],
+    local_provider: bool,
 ) -> Result<CommandRunOutput, String> {
     let started = Instant::now();
     let (spawn_program, spawn_args) = provider_spawn_command_parts(program, args)?;
@@ -2881,7 +2888,7 @@ async fn run_command_capture_with_setup_stdin(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    apply_provider_command_env(&mut cmd, &spawn_program, env);
+    apply_provider_spawn_environment(&mut cmd, &spawn_program, env, local_provider);
     crate::winproc::apply_pdeathsig_preexec(&mut cmd);
 
     let mut child = cmd
@@ -3002,6 +3009,24 @@ pub(crate) fn apply_provider_command_env(
         }
     }
     cmd.env("WSLENV", parts.join(":"));
+}
+
+pub(crate) fn apply_provider_spawn_environment(
+    command: &mut Command,
+    spawn_program: &str,
+    env: &[ProviderCommandEnvVar],
+    local_provider: bool,
+) {
+    apply_provider_command_env(command, spawn_program, env);
+    #[cfg(not(windows))]
+    if local_provider {
+        crate::provider_runtime::apply_local_provider_child_path(
+            command,
+            env.iter().any(|item| item.name == "PATH"),
+        );
+    }
+    #[cfg(windows)]
+    let _ = local_provider;
 }
 
 fn is_wsl_spawn_program(program: &str) -> bool {

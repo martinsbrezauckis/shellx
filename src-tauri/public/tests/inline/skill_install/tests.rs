@@ -234,7 +234,7 @@ fn ensure_installed_at_writes_on_fresh_target() {
     let target = root.join("skills").join("shellx-host").join("SKILL.md");
 
     let body = "# shellx-host\nhello world\n";
-    let r = ensure_installed_at(&target, body).expect("install");
+    let r = ensure_installed_at(&root, &target, body).expect("install");
     assert!(r, "first install must return Ok(true)");
     assert!(target.is_file());
     let on_disk = std::fs::read_to_string(&target).expect("read");
@@ -253,10 +253,10 @@ fn ensure_installed_at_skips_when_bytes_match() {
     let target = root.join("skills").join("shellx-host").join("SKILL.md");
 
     let body = "# shellx-host\nskip me\n";
-    assert!(ensure_installed_at(&target, body).expect("first"));
+    assert!(ensure_installed_at(&root, &target, body).expect("first"));
     // mtime can be flaky in CI tempfs, so we don't compare mtimes.
     // The Ok(false) return is the contract; we assert that.
-    let r = ensure_installed_at(&target, body).expect("second");
+    let r = ensure_installed_at(&root, &target, body).expect("second");
     assert!(
         !r,
         "second install with identical body must return Ok(false)"
@@ -279,7 +279,7 @@ fn ensure_installed_at_overwrites_when_bytes_drift() {
     std::fs::write(&target, "old content").unwrap();
 
     let new_body = "# shellx-host\nfresh\n";
-    let r = ensure_installed_at(&target, new_body).expect("install");
+    let r = ensure_installed_at(&root, &target, new_body).expect("install");
     assert!(r, "drifted target must overwrite + return Ok(true)");
     assert_eq!(std::fs::read_to_string(&target).unwrap(), new_body);
 
@@ -299,12 +299,28 @@ fn ensure_installed_at_rejects_symlink_leaf() {
     std::fs::write(&outside, "outside").unwrap();
     symlink(&outside, &target).unwrap();
 
-    let err = ensure_installed_at(&target, "# shellx-host\nfresh\n")
+    let err = ensure_installed_at(&root, &target, "# shellx-host\nfresh\n")
         .expect_err("installer must not follow a symlink leaf");
     assert!(err.contains("symlink"), "unexpected error: {err}");
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside");
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(unix)]
+#[test]
+fn ensure_installed_at_rejects_linked_parent() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("home");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let target = outside.join("SKILL.md");
+    std::fs::write(&target, b"keep").unwrap();
+    symlink(&outside, root.join("shellx-host")).unwrap();
+    assert!(ensure_installed_at(&root, &root.join("shellx-host/SKILL.md"), "replace").is_err());
+    assert_eq!(std::fs::read(target).unwrap(), b"keep");
 }
 
 #[test]
@@ -385,7 +401,7 @@ fn migration_removes_disabled_global_host_mcp_and_preserves_user_config() {
     )
     .unwrap();
 
-    let changed = cleanup_grok_host_mcp_config_at(&config).expect("cleanup");
+    let changed = cleanup_grok_host_mcp_config_at(&root, &config).expect("cleanup");
 
     assert!(changed, "legacy global block should be removed");
     let rewritten = std::fs::read_to_string(&config).unwrap();
@@ -394,6 +410,62 @@ fn migration_removes_disabled_global_host_mcp_and_preserves_user_config() {
     assert!(rewritten.contains("[mcp_servers.keep]"));
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn project_grok_cleanup_refuses_linked_config_without_touching_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let grok = project.join(".grok");
+    std::fs::create_dir_all(&grok).unwrap();
+    let outside = directory.path().join("outside.toml");
+    let original = format!(
+        "# {MCP_BEGIN_NEEDLE}\n[mcp_servers.grok-shell-host]\ncommand = \"old\"\n# {MCP_END_NEEDLE}\n"
+    );
+    std::fs::write(&outside, &original).unwrap();
+    let config = grok.join("config.toml");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &config).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_file(&outside, &config).is_err() {
+        eprintln!("Windows file symlink unavailable; junction test covers reparse directory");
+        return;
+    }
+    assert!(cleanup_project_grok_host_mcp_config(&project).is_err());
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), original);
+}
+
+#[test]
+fn project_grok_setup_refuses_linked_directory_without_touching_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&project)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let exclude = project.join(".git").join("info").join("exclude");
+    std::fs::write(&exclude, b"# keep user Git excludes\n").unwrap();
+    let config = outside.join("config.toml");
+    std::fs::write(&config, b"keep").unwrap();
+    let grok = project.join(".grok");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &grok).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_dir(&outside, &grok).is_err() {
+        eprintln!("Windows directory symlink unavailable; junction test covers reparse directory");
+        return;
+    }
+    assert!(ensure_project_mcp_http_config(&project, 1234, "synthetic", "test-tab", "").is_err());
+    assert_eq!(std::fs::read(config).unwrap(), b"keep");
+    assert_eq!(
+        std::fs::read(exclude).unwrap(),
+        b"# keep user Git excludes\n"
+    );
 }
 
 #[test]

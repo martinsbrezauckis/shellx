@@ -133,6 +133,41 @@ fn wsl_spawn_program_detection_accepts_resolved_paths() {
     assert!(!is_wsl_spawn_program("C:\\Tools\\codex.exe"));
 }
 
+#[cfg(unix)]
+#[test]
+fn local_provider_spawn_environment_sets_child_path_and_preserves_override() {
+    let mut local = Command::new("/usr/bin/true");
+    apply_provider_spawn_environment(&mut local, "/usr/bin/true", &[], true);
+    let local_path = local
+        .as_std()
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value))
+        .flatten()
+        .expect("local child PATH");
+    assert_eq!(
+        local_path,
+        crate::provider_runtime::local_provider_child_path().expect("local provider search PATH")
+    );
+
+    let mut remote = Command::new("/usr/bin/true");
+    apply_provider_spawn_environment(&mut remote, "/usr/bin/true", &[], false);
+    assert!(remote.as_std().get_envs().all(|(name, _)| name != "PATH"));
+
+    let override_env = [ProviderCommandEnvVar {
+        name: "PATH".to_string(),
+        value: "/fixture/explicit".to_string(),
+    }];
+    let mut overridden = Command::new("/usr/bin/true");
+    apply_provider_spawn_environment(&mut overridden, "/usr/bin/true", &override_env, true);
+    let explicit_path = overridden
+        .as_std()
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value))
+        .flatten()
+        .expect("explicit child PATH");
+    assert_eq!(explicit_path, "/fixture/explicit");
+}
+
 #[test]
 fn wsl_provider_env_forwarding_keeps_bearer_tokens_raw() {
     let mut cmd = Command::new("wsl.exe");

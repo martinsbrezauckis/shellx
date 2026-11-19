@@ -427,10 +427,27 @@ pub(super) fn preview_start_caller_tab(
     args: &Value,
     tab_id: Option<&str>,
 ) -> Result<String, String> {
-    let tab = resolve_mcp_tab_id(tab_id, "preview_start")?;
+    preview_caller_tab(args, tab_id, "preview_start")
+}
+
+pub(super) fn preview_diagnose_caller_tab(
+    args: &Value,
+    tab_id: Option<&str>,
+) -> Result<String, String> {
+    preview_caller_tab(args, tab_id, "preview_diagnose")
+}
+
+fn preview_caller_tab(
+    args: &Value,
+    tab_id: Option<&str>,
+    tool_name: &str,
+) -> Result<String, String> {
+    let tab = resolve_mcp_tab_id(tab_id, tool_name)?;
     if let Some(target) = args.get("tabId") {
         if target.as_str().is_none_or(|value| value.trim() != tab) {
-            return Err("preview_start: tabId must match the authenticated MCP tab".to_string());
+            return Err(format!(
+                "{tool_name}: tabId must match the authenticated MCP tab"
+            ));
         }
     }
     Ok(tab)
@@ -442,13 +459,7 @@ pub(super) async fn tool_preview_diagnose(
     tab_id: Option<&str>,
 ) -> Result<Value, String> {
     use tauri::Manager as _;
-    let tab = args
-        .get("tabId")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or(resolve_mcp_tab_id(tab_id, "preview_diagnose")?);
+    let tab = preview_diagnose_caller_tab(&args, tab_id)?;
     let body = json!({
         "tabId": tab,
         "browserEvents": args.get("browserEvents").cloned().unwrap_or_else(|| json!([])),

@@ -1830,11 +1830,12 @@ function PromptComposer({
               aria-haspopup="listbox"
               aria-expanded={branchPickerOpen}
               aria-controls="branch-picker-popover"
-              title="Pick branch for this tab"
+              title="Select a reference branch; Git HEAD and the agent folder stay unchanged"
+              aria-label={`Reference branch ${scopeBranch}. Selection does not switch Git HEAD or the agent folder.`}
               onClick={() => setBranchPickerOpen((v) => !v)}
             >
               <span className="sico"><ShellIcon name="git-branch" size={14} /></span>
-              <span className="scope-label">{scopeBranch}</span>
+              <span className="scope-label">Ref: {scopeBranch}</span>
               {typeof scopeBranchAhead === "number" && scopeBranchAhead > 0 && (
                 <span className="ssub scope-ahead">
                   <ShellIcon name="arrow-up" size={11} />

@@ -22,6 +22,68 @@ fn frontend_cwd_under_current_home_is_not_trust_root() {
         );
 }
 
+#[test]
+fn native_selected_folder_authorizes_only_its_disconnected_tab() {
+    let roots = OperatorPreviewRoots::default();
+    roots.set(
+        "selected-tab".to_string(),
+        "/work/owned/project".to_string(),
+    );
+    let disconnected = AssetCopyContext {
+        registry_cwd: None,
+        ssh_config: None,
+        wsl_distro: None,
+    };
+    let selected = operator_preview_cwd(&disconnected, "selected-tab", &roots);
+    assert!(preview_path_is_under_session_cwd(
+        "/work/owned/project/note.txt",
+        selected.as_deref(),
+    ));
+    assert!(!preview_path_is_under_session_cwd(
+        "/work/owned/project-sibling/secret.txt",
+        selected.as_deref(),
+    ));
+    assert!(operator_preview_cwd(&disconnected, "different-tab", &roots).is_none());
+
+    roots.clear("selected-tab");
+    assert!(operator_preview_cwd(&disconnected, "selected-tab", &roots).is_none());
+}
+
+#[test]
+fn native_selected_folder_cannot_replace_agent_or_remote_preview_root() {
+    let roots = OperatorPreviewRoots::default();
+    roots.set("agent-tab".to_string(), "/work/selected".to_string());
+    let registered = AssetCopyContext {
+        registry_cwd: Some("/home/user/agent-project".to_string()),
+        ssh_config: None,
+        wsl_distro: None,
+    };
+    assert!(operator_preview_cwd(&registered, "agent-tab", &roots).is_none());
+    let remote = AssetCopyContext {
+        registry_cwd: None,
+        ssh_config: None,
+        wsl_distro: Some("Ubuntu-24.04".to_string()),
+    };
+    assert!(operator_preview_cwd(&remote, "agent-tab", &roots).is_none());
+}
+
+#[test]
+fn native_selected_windows_root_matches_normal_picker_paths() {
+    let roots = OperatorPreviewRoots::default();
+    let root = strip_windows_extended_path_prefix(r"\\?\C:\Users\FixtureUser\project");
+    roots.set("windows-tab".to_string(), root);
+    let disconnected = AssetCopyContext {
+        registry_cwd: None,
+        ssh_config: None,
+        wsl_distro: None,
+    };
+    let selected = operator_preview_cwd(&disconnected, "windows-tab", &roots);
+    assert!(preview_path_is_under_session_cwd(
+        "C:/Users/FixtureUser/project/note.txt",
+        selected.as_deref(),
+    ));
+}
+
 #[tokio::test]
 async fn list_files_unknown_explicit_connection_id_fails_closed() {
     let registry = Arc::new(SessionRegistry::new());

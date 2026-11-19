@@ -7,8 +7,8 @@ use super::{
 };
 use crate::task_model::{
     deterministic_occurrence_id, execution_receipt_payload, TaskAttempt, TaskAttemptState,
-    TaskDefinition, TaskDefinitionRevision, TaskExecutionTransition, TaskOccurrence,
-    TaskOccurrenceLease, TaskOccurrenceState, TaskProviderDecisionReceipt,
+    TaskCommittedStart, TaskDefinition, TaskDefinitionRevision, TaskExecutionTransition,
+    TaskOccurrence, TaskOccurrenceLease, TaskOccurrenceState, TaskProviderDecisionReceipt,
     TaskProviderDecisionStage, TaskProviderDecisionVerdict,
 };
 use crate::task_receipts::{TaskReceipt, TaskReceiptKind};
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 const MIN_LEASE_MS: i64 = 1_000;
 const MAX_LEASE_MS: i64 = 24 * 60 * 60 * 1_000;
-const MAX_PROVIDER_CATALOG_CLOCK_SKEW_MS: i64 = 5_000;
+pub(crate) const MAX_PROVIDER_CATALOG_CLOCK_SKEW_MS: i64 = 5_000;
 
 pub(crate) struct TaskNotificationAttempt {
     pub(crate) receipt: TaskReceipt,
@@ -307,6 +307,7 @@ impl TaskStore {
                 attempt_number,
                 state: TaskAttemptState::Running,
                 lease_id,
+                committed_start: None,
                 created_at_ms: now_ms,
                 updated_at_ms: now_ms,
             });
@@ -389,7 +390,34 @@ impl TaskStore {
                 return Ok(ProviderDecisionAppendResult::OutcomeUnknown);
             }
             validate_provider_decision(&revision, &decision)?;
-            validate_provider_decision_freshness(&decision, now_ms)?;
+            let attempt = occurrence
+                .attempts
+                .iter()
+                .find(|attempt| {
+                    attempt.attempt_id == attempt_id && attempt.lease_id == receipt_lease_id
+                })
+                .ok_or(TaskStoreError::LeaseMismatch)?;
+            validate_provider_decision_freshness(
+                &decision,
+                attempt.committed_start.as_ref(),
+                now_ms,
+            )?;
+            let first_start = decision.stage == TaskProviderDecisionStage::CommittedStart
+                && is_first_committed_start_reason(decision.reason_code.as_deref());
+            if first_start && attempt.committed_start.is_some() {
+                return Err(TaskStoreError::Invalid(
+                    "provider attempt already has a committed start".to_string(),
+                ));
+            }
+            let marker = first_start.then(|| TaskCommittedStart {
+                committed_at_ms: now_ms,
+                catalogue_snapshot_id: decision.catalogue_snapshot_id.clone(),
+                catalogue_generated_at_ms: decision.catalogue_generated_at_ms,
+                catalogue_fresh_until_ms: decision.catalogue_fresh_until_ms,
+                candidate_order: decision.candidate_order,
+                provider_id: decision.provider_id.clone(),
+                model: decision.model.clone(),
+            });
             let receipt = append_execution_receipt(
                 state,
                 &definition,
@@ -398,11 +426,22 @@ impl TaskStore {
                 TaskReceiptKind::OccurrenceProviderDecision,
                 TaskExecutionTransition::ProviderDecision,
                 Some(decision),
-                Some(attempt_id),
-                Some(receipt_lease_id),
+                Some(attempt_id.clone()),
+                Some(receipt_lease_id.clone()),
                 None,
                 now_ms,
             )?;
+            if let Some(marker) = marker {
+                let attempt = occurrence
+                    .attempts
+                    .iter_mut()
+                    .find(|attempt| {
+                        attempt.attempt_id == attempt_id && attempt.lease_id == receipt_lease_id
+                    })
+                    .ok_or(TaskStoreError::LeaseMismatch)?;
+                attempt.committed_start = Some(marker);
+                state.occurrences.insert(occurrence_id, occurrence.clone());
+            }
             if let Some(source) = terminal_provider_attention_source(&occurrence, &receipt)? {
                 open_attention_source(state, source)?;
             }
@@ -1018,17 +1057,77 @@ pub(crate) fn validate_provider_decision(
 
 fn validate_provider_decision_freshness(
     decision: &TaskProviderDecisionReceipt,
+    committed_start: Option<&TaskCommittedStart>,
     now_ms: i64,
 ) -> Result<(), TaskStoreError> {
+    // The catalogue admits a route and its first committed start. Once that
+    // effect is committed, an active provider may outlive the catalogue TTL;
+    // its later activity and terminal receipts still require the exact lease,
+    // immutable route, and bounded decision fields above.
+    let is_followup_activity = decision.stage == TaskProviderDecisionStage::CommittedStart
+        && matches!(
+            decision.reason_code.as_deref(),
+            Some(
+                "providerActivity.providerAccepted"
+                    | "providerActivity.providerRunning"
+                    | "providerActivity.firstTaskContent"
+                    | "providerActivity.toolOrApproval"
+                    | "providerActivity.possibleExternalEffect"
+            )
+        );
     if decision.catalogue_generated_at_ms
         > now_ms.saturating_add(MAX_PROVIDER_CATALOG_CLOCK_SKEW_MS)
-        || decision.catalogue_fresh_until_ms < now_ms
+    {
+        return Err(TaskStoreError::Invalid(
+            "provider decision catalogue evidence is not fresh".to_string(),
+        ));
+    }
+    if decision.stage == TaskProviderDecisionStage::CommittedStart
+        && !is_followup_activity
+        && !is_first_committed_start_reason(decision.reason_code.as_deref())
+    {
+        return Err(TaskStoreError::Invalid(
+            "provider committed start reason is invalid".to_string(),
+        ));
+    }
+    let expired = decision.catalogue_fresh_until_ms < now_ms;
+    if is_followup_activity || (decision.stage == TaskProviderDecisionStage::Terminal && expired) {
+        let matches_start = committed_start.is_some_and(|start| {
+            start.catalogue_snapshot_id == decision.catalogue_snapshot_id
+                && start.catalogue_generated_at_ms == decision.catalogue_generated_at_ms
+                && start.catalogue_fresh_until_ms == decision.catalogue_fresh_until_ms
+                && start.candidate_order == decision.candidate_order
+                && start.provider_id == decision.provider_id
+                && start.model == decision.model
+        });
+        if !matches_start {
+            return Err(TaskStoreError::Invalid(
+                "provider follow-up lacks this attempt's committed start".to_string(),
+            ));
+        }
+    }
+    if expired
+        && decision.stage != TaskProviderDecisionStage::Terminal
+        && !(decision.stage == TaskProviderDecisionStage::CommittedStart && is_followup_activity)
     {
         return Err(TaskStoreError::Invalid(
             "provider decision catalogue evidence is not fresh".to_string(),
         ));
     }
     Ok(())
+}
+
+fn is_first_committed_start_reason(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some(
+            "providerAccepted"
+                | "providerRunning"
+                | "firstTaskContent"
+                | "toolOrApproval"
+                | "possibleExternalEffect"
+        )
+    )
 }
 
 fn is_exact_snapshot_id(value: &str) -> bool {

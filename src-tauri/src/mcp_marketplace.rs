@@ -23,6 +23,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -700,7 +701,10 @@ pub fn cleanup_project_marketplace_config(project_dir: &Path) -> Result<bool, St
     if updated == existing {
         return Ok(false);
     }
-    write_grok_config_validated(&path, updated.trim_end())?;
+    validate_grok_config(&path, updated.trim_end())?;
+    // Project migration uses the same held-directory/no-link writer as the
+    // other legacy project migrations, retaining the file's own metadata.
+    crate::linked_file_write::in_place_under(project_dir, &path, updated.trim_end().as_bytes())?;
     Ok(true)
 }
 
@@ -862,16 +866,43 @@ fn config_section_for_entry_for_platform(
 }
 
 fn posix_stdio_command_with_user_path(cmd: &str, args: &[&str]) -> (String, Vec<String>) {
+    (
+        "bash".to_string(),
+        vec![
+            "-lc".to_string(),
+            posix_stdio_script_with_user_path(cmd, args),
+        ],
+    )
+}
+
+fn posix_stdio_script_with_user_path(cmd: &str, args: &[&str]) -> String {
+    // AppImage exports its bundled Python home into every child. uvx starts
+    // an external Python interpreter, which exits before MCP initialize if
+    // that interpreter inherits the bundled stdlib paths. Remove only the
+    // AppImage-owned prefix; keep unrelated user Python paths intact.
+    let appimage_python_env = if cmd == "uvx" {
+        "if [ -n \"${APPIMAGE:-}\" ] && [ -n \"${APPDIR:-}\" ]; then \
+         _shellx_appdir=${APPDIR%/}; \
+         if [ -n \"$_shellx_appdir\" ]; then \
+         case \"${PYTHONHOME:-}\" in \"$_shellx_appdir\"|\"$_shellx_appdir\"/*) unset PYTHONHOME;; esac; \
+         case \"${PYTHONPATH:-}\" in \"$_shellx_appdir\"/*) \
+         _shellx_python_tail=${PYTHONPATH#*:}; \
+         if [ \"$_shellx_python_tail\" = \"$PYTHONPATH\" ] || [ -z \"$_shellx_python_tail\" ]; then \
+         unset PYTHONPATH; else export PYTHONPATH=\"$_shellx_python_tail\"; fi;; esac; fi; fi; "
+    } else {
+        ""
+    };
     let mut command = format!(
-        "{} exec {}",
+        "{} {}exec {}",
         crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
+        appimage_python_env,
         crate::acp::shell_quote_for_remote(cmd)
     );
     for arg in args {
         command.push(' ');
         command.push_str(&shell_quote_catalog_arg_for_remote(arg));
     }
-    ("bash".to_string(), vec!["-lc".to_string(), command])
+    command
 }
 
 fn shell_quote_catalog_arg_for_remote(arg: &str) -> String {
@@ -946,15 +977,47 @@ fn remove_grok_config_entry(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn write_grok_config_validated(path: &PathBuf, updated: &str) -> Result<(), String> {
+fn validate_grok_config(path: &Path, updated: &str) -> Result<(), String> {
     if !updated.trim().is_empty() {
         toml::from_str::<toml::Value>(updated)
             .map_err(|e| format!("generated TOML for {} is invalid: {}", path.display(), e))?;
     }
-    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
-    fs::write(&tmp, updated.as_bytes())
-        .map_err(|e| format!("write tmp {}: {}", tmp.display(), e))?;
-    fs::rename(&tmp, path).map_err(|e| format!("rename {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn write_grok_config_validated(path: &PathBuf, updated: &str) -> Result<(), String> {
+    validate_grok_config(path, updated)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("config {} has no parent directory", path.display()))?;
+    let permissions = match fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("metadata {}: {}", path.display(), error)),
+    };
+    // Create an unpredictable, exclusive file in the destination directory so
+    // persist keeps the replacement atomic without following a planted tmp link.
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("create tmp for {}: {}", path.display(), error))?;
+    tmp.write_all(updated.as_bytes())
+        .map_err(|error| format!("write tmp for {}: {}", path.display(), error))?;
+    if let Some(permissions) = &permissions {
+        tmp.as_file()
+            .set_permissions(permissions.clone())
+            .map_err(|error| format!("set tmp permissions for {}: {}", path.display(), error))?;
+    }
+    let persisted = tmp
+        .persist(path)
+        .map_err(|error| format!("rename {}: {}", path.display(), error.error))?;
+    // Windows persist clears the temporary attribute before its rename.
+    #[cfg(windows)]
+    if let Some(permissions) = permissions {
+        persisted
+            .set_permissions(permissions)
+            .map_err(|error| format!("set permissions for {}: {}", path.display(), error))?;
+    }
+    #[cfg(not(windows))]
+    let _ = persisted;
     Ok(())
 }
 
@@ -1366,17 +1429,12 @@ fn acp_server_for_entry(
             let (program, raw_args) = command_parts.split_first()?;
             let (command, args) = match runtime {
                 MarketplaceAcpRuntime::Posix => {
-                    let mut script = format!(
-                        "{} exec {}",
-                        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
-                        crate::acp::shell_quote_for_remote(program)
-                    );
-                    for arg in raw_args {
-                        script.push(' ');
-                        script.push_str(&shell_quote_catalog_arg_for_remote(
-                            &expand_vault_placeholders_to_env_refs(arg),
-                        ));
-                    }
+                    let expanded_args = raw_args
+                        .iter()
+                        .map(|arg| expand_vault_placeholders_to_env_refs(arg))
+                        .collect::<Vec<_>>();
+                    let args = expanded_args.iter().map(String::as_str).collect::<Vec<_>>();
+                    let script = posix_stdio_script_with_user_path(program, &args);
                     (
                         "/usr/bin/env".to_string(),
                         vec!["bash".to_string(), "-lc".to_string(), script],

@@ -307,7 +307,7 @@ fn permission_policy(mode: &ProviderPermissionMode) -> (&'static str, &'static s
     match mode {
         ProviderPermissionMode::BypassPermissions => ("never", "danger-full-access"),
         ProviderPermissionMode::ReadOnly => ("never", "read-only"),
-        ProviderPermissionMode::Default => ("untrusted", "workspace-write"),
+        ProviderPermissionMode::Default => ("on-request", "workspace-write"),
         ProviderPermissionMode::AcceptEdits => ("never", "workspace-write"),
     }
 }

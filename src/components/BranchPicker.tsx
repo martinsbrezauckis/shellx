@@ -4,9 +4,9 @@
  *
  *  wired via the `git_branches` Tauri command (Rust calls
  * `git for-each-ref` and returns name + isCurrent + upstream). On select,
- * fires `onSelect(name)` so the parent can persist `scopeBranch` to the
- * active tab. Worktree creation lives in the owned right-rail Git flow;
- * this picker only selects an existing branch.
+ * fires `onSelect(name)` so the parent can persist a reference branch on the
+ * active tab. It does not change Git HEAD or the agent working folder;
+ * worktree creation lives in the right-rail Git flow.
  *
  * Keyboard: Esc closes, Arrow/Home/End moves selection, Enter picks.
  */
@@ -25,9 +25,9 @@ export function BranchPicker({
   activeTabId,
 }: {
   open: boolean;
- /** Currently-checked-out branch — used to render the active marker. */
+ /** Tab's selected reference branch; the current Git branch is marked separately. */
   activeName?: string;
- /** Called when user picks a branch — sets scopeBranch on active tab. */
+ /** Called when user picks a reference branch for the active tab. */
   onSelect: (name: string) => void;
   onClose: () => void;
  /** Working dir to pass to `git for-each-ref`. Falls back to "." if absent. */
@@ -194,8 +194,8 @@ export function BranchPicker({
       }}
     >
       <div className="bp-head">
-        <span>Branches</span>
-        {activeName && <span style={{ opacity: 0.6, marginLeft: 8 }}>· current: {activeName}</span>}
+        <span>Reference branch</span>
+        {activeName && <span style={{ opacity: 0.6, marginLeft: 8 }}>· selected: {activeName}</span>}
       </div>
       <div className="bp-section" style={{ maxHeight: 320, overflowY: "auto", padding: 4 }}>
         {loading && <div style={{ padding: 12, opacity: 0.6 }}>Loading…</div>}
@@ -240,7 +240,7 @@ export function BranchPicker({
         ))}
       </div>
       <div className="bp-foot">
-        <span><kbd>Esc</kbd> close</span>
+        <span>Selection does not switch Git HEAD or the agent folder. Use Git to create a worktree. <kbd>Esc</kbd> closes.</span>
       </div>
     </div>,
     document.body,

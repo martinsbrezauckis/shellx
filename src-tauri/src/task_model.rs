@@ -298,8 +298,24 @@ pub struct TaskAttempt {
     pub attempt_number: u8,
     pub state: TaskAttemptState,
     pub lease_id: String,
+    /// The exact fresh first provider start for this attempt. Receipt retention
+    /// may prune its journal entry while the provider remains active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_start: Option<TaskCommittedStart>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommittedStart {
+    pub committed_at_ms: i64,
+    pub catalogue_snapshot_id: String,
+    pub catalogue_generated_at_ms: i64,
+    pub catalogue_fresh_until_ms: i64,
+    pub candidate_order: u16,
+    pub provider_id: String,
+    pub model: TaskModelSelection,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

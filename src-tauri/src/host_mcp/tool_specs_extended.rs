@@ -341,7 +341,7 @@ pub(super) fn extended_tool_specs() -> Vec<Value> {
                 "properties": {
                     "tabId": {
                         "type": "string",
-                        "description": "Optional tab id override. Omit to use the active MCP tab."
+                        "description": "Optional caller tab id. If supplied, it must match the authenticated MCP tab."
                     },
                     "browserEvents": {
                         "type": "array",

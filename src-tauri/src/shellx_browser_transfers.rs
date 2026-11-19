@@ -27,9 +27,10 @@ pub(crate) use native_downloads::{
     native_download_permit_matches_current_engine_context_locked,
     native_download_replay_failure_reason, quarantine_native_downloads_for_engine_locked,
     BrowserNativeDownloadPermit, BrowserNativeDownloadRequested, BrowserNativeDownloadResume,
-    NativeDownloadCancellationAcks, NativeDownloadPermitStatus,
+    NativeDownloadCancellationAcks, NativeDownloadPermitStatus, NativeDownloadReplayPhase,
 };
 
+const NATIVE_DOWNLOAD_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const NATIVE_DOWNLOAD_REPLAY_CALLBACK_TIMEOUT: Duration = Duration::from_secs(15);
 const BROWSER_TRANSFER_RETENTION_LIMIT: usize = 200;
 
@@ -84,12 +85,23 @@ pub async fn shellx_browser_grant_transfer(
         }
     };
     if let Some(resume) = resume {
+        schedule_native_download_phase_timeout(
+            &registry,
+            &resume.transfer_id,
+            &resume.approval_id,
+            NativeDownloadReplayPhase::InReplay,
+        );
         if let Err(error) = resume_native_browser_download_locked(&app, &registry, &resume).await {
             registry.fail_native_download_resume(&approval.transfer_id, &error);
             return Err(error);
         }
     }
-    schedule_native_download_approval_timeout(&registry, &approval);
+    schedule_native_download_phase_timeout(
+        &registry,
+        &approval.transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::AwaitingAck,
+    );
     Ok(approval)
 }
 
@@ -111,6 +123,19 @@ pub(crate) async fn resume_native_browser_download(
     resume_native_browser_download_locked(app, registry, resume).await
 }
 
+/// Recreate the original download intent for an exact approved URL. A plain
+/// navigation can render a text response instead of entering Wry's native
+/// download callback, even when the first page link requested a download.
+/// The browser still owns the request, cookies, redirects, and callback; the
+/// permit accepts only the approved URL on the current engine binding.
+fn native_download_replay_script(source_url: &str) -> Result<String, String> {
+    let url = serde_json::to_string(source_url)
+        .map_err(|error| format!("encode approved native Browser download URL failed: {error}"))?;
+    Ok(format!(
+        "(() => {{ const link = document.createElement('a'); link.href = {url}; link.download = ''; link.style.display = 'none'; document.body.appendChild(link); link.click(); link.remove(); }})()"
+    ))
+}
+
 async fn resume_native_browser_download_locked(
     app: &AppHandle,
     registry: &Arc<ShellxBrowserRegistry>,
@@ -127,51 +152,45 @@ async fn resume_native_browser_download_locked(
     let webview = app
         .get_webview(&engine_label)
         .ok_or_else(|| format!("Browser engine webview '{}' is not mounted", engine_label))?;
-    #[cfg(windows)]
-    {
-        // This is the operator-approved retry, not another page-initiated
-        // automatic download. Keep the exact permit/context checks above and
-        // start navigation through the native host, without granting the page
-        // persistent or unrestricted multiple-download permission.
-        let url = tauri::Url::parse(&resume.source_url).map_err(|error| {
-            format!("parse approved native Browser download URL failed: {error}")
-        })?;
-        crate::shellx_browser_webview_runtime::navigate_browser_webview(&webview, url).await?;
-    }
-    #[cfg(not(windows))]
-    {
-        let url = serde_json::to_string(&resume.source_url).map_err(|error| {
-            format!("encode approved native Browser download URL failed: {error}")
-        })?;
-        webview
-            .eval(format!("window.location.assign({url});"))
-            .map_err(|error| format!("resume approved native Browser download failed: {error}"))?;
-    }
+    // InReplay was claimed under the state lock before WebView evaluation. A
+    // synchronous native callback can therefore consume this exact permit.
+    registry.record_native_download_replay_dispatch(resume)?;
+    webview
+        .eval(native_download_replay_script(&resume.source_url)?)
+        .map_err(|error| format!("resume approved native Browser download failed: {error}"))?;
     Ok(())
 }
 
-fn schedule_native_download_approval_timeout(
+pub(crate) fn schedule_native_download_phase_timeout(
     registry: &Arc<ShellxBrowserRegistry>,
-    approval: &BrowserTransferApproval,
+    transfer_id: &str,
+    approval_id: &str,
+    phase: NativeDownloadReplayPhase,
 ) {
-    // An approval may still be waiting for Wry to acknowledge cancellation of
-    // the original request. Bound that wait as well as the replay callback.
+    // Each claimed phase has its own deadline. A later transition makes an
+    // earlier timer inert, and InProgress is never eligible for timeout.
     let pending = lock_or_recover(&registry.state)
         .native_download_permits
-        .get(&approval.transfer_id)
+        .get(transfer_id)
         .is_some_and(|permit| {
             permit.status == NativeDownloadPermitStatus::Approved
-                && permit.approval_id.as_deref() == Some(approval.approval_id.as_str())
+                && permit.approval_id.as_deref() == Some(approval_id)
+                && permit.replay_phase == phase
         });
     if !pending {
         return;
     }
     let registry = Arc::clone(registry);
-    let transfer_id = approval.transfer_id.clone();
-    let approval_id = approval.approval_id.clone();
+    let transfer_id = transfer_id.to_string();
+    let approval_id = approval_id.to_string();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(NATIVE_DOWNLOAD_REPLAY_CALLBACK_TIMEOUT).await;
-        registry.fail_native_download_resume_if_still_approved(&transfer_id, &approval_id);
+        let timeout = if phase == NativeDownloadReplayPhase::AwaitingAck {
+            NATIVE_DOWNLOAD_ACK_TIMEOUT
+        } else {
+            NATIVE_DOWNLOAD_REPLAY_CALLBACK_TIMEOUT
+        };
+        tokio::time::sleep(timeout).await;
+        registry.fail_native_download_resume_if_still_in_phase(&transfer_id, &approval_id, phase);
     });
 }
 
@@ -348,6 +367,11 @@ impl ShellxBrowserRegistry {
                     browser_tab_id: entry.browser_tab_id.clone(),
                     approval_id: None,
                     status: NativeDownloadPermitStatus::Requested,
+                    replay_phase: NativeDownloadReplayPhase::Idle,
+                    #[cfg(windows)]
+                    webview2_replay_dispatched: false,
+                    #[cfg(windows)]
+                    webview2_replay_permission_claimed: false,
                     destination_dir: None,
                     display_name: entry.display_name.clone(),
                     stage: None,
@@ -570,12 +594,36 @@ impl ShellxBrowserRegistry {
                 .expect("native Browser download row was checked while holding the state lock");
             entry.status = "approved".to_string();
             entry.approval_id = Some(approval.approval_id.clone());
+            let waiting_for_ack = native_permit.as_ref().is_some_and(|permit| {
+                state.native_download_cancellation_acks.has_pending(
+                    &permit.engine_id,
+                    &permit.event_binding,
+                    &permit.source_url,
+                )
+            });
             let permit = state
                 .native_download_permits
                 .get_mut(&approval.transfer_id)
                 .expect("native Browser permit was checked while holding the state lock");
             permit.approval_id = Some(approval.approval_id.clone());
             permit.status = NativeDownloadPermitStatus::Approved;
+            permit.replay_phase = if waiting_for_ack {
+                NativeDownloadReplayPhase::AwaitingAck
+            } else {
+                NativeDownloadReplayPhase::Ready
+            };
+            if waiting_for_ack {
+                push_receipt(
+                    &mut state,
+                    "browserNativeDownloadAwaitingCancellation",
+                    native_permit
+                        .as_ref()
+                        .and_then(|permit| permit.task_id.clone()),
+                    None,
+                    "Native download waiting for cancellation acknowledgement".to_string(),
+                    json!({ "transferId": approval.transfer_id }),
+                );
+            }
         }
         Ok(approval)
     }

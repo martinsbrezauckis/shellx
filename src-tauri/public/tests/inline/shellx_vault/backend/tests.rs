@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "keyfile_continuity_tests.rs"]
+mod keyfile_continuity_tests;
+
 #[tokio::test]
 async fn compatibility_bridge_round_trips_one_backend_across_active_surfaces() {
     let dir = tempfile::tempdir().expect("vault profile tempdir");
@@ -463,7 +466,7 @@ async fn manual_lock_blocks_remembered_device_auto_unlock_until_passphrase_unloc
     let secret_key = "test/manual-lock";
     let secret_value = "manual-lock-value";
     let store: Arc<dyn RememberedDeviceStore> = Arc::new(MemoryRememberedDeviceStore::default());
-    let backend = test_backend_with_store(dir.path().to_path_buf(), store);
+    let backend = test_backend_with_store(dir.path().to_path_buf(), store.clone());
     let recovery = backend
         .begin_setup(SetupRequest {
             target: SetupTarget::Local,
@@ -507,6 +510,20 @@ async fn manual_lock_blocks_remembered_device_auto_unlock_until_passphrase_unloc
     assert!(backend.status().await.unlocked);
     assert_eq!(
         backend.compat_get(secret_key).await.expect("read secret"),
+        Some(secret_value.to_string())
+    );
+    assert!(backend.status().await.remembered_device_enabled);
+    drop(backend);
+
+    let restarted = test_backend_with_store(dir.path().to_path_buf(), store);
+    let restarted_status = restarted.status().await;
+    assert!(restarted_status.remembered_device_enabled);
+    assert!(restarted_status.unlocked);
+    assert_eq!(
+        restarted
+            .compat_get(secret_key)
+            .await
+            .expect("read after restart"),
         Some(secret_value.to_string())
     );
 }

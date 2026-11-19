@@ -706,6 +706,7 @@ impl ShellxBrowserRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn fail_native_download_resume_if_still_approved(
         &self,
         transfer_id: &str,
@@ -727,6 +728,40 @@ impl ShellxBrowserRegistry {
         approval_id: &str,
         detail: &str,
     ) {
+        self.fail_native_download_resume_if_still_approved_in_phase(
+            transfer_id,
+            approval_id,
+            None,
+            detail,
+        );
+    }
+
+    pub(crate) fn fail_native_download_resume_if_still_in_phase(
+        &self,
+        transfer_id: &str,
+        approval_id: &str,
+        phase: super::NativeDownloadReplayPhase,
+    ) {
+        let detail = if phase == super::NativeDownloadReplayPhase::AwaitingAck {
+            "native Browser download cancellation was not acknowledged within 15 seconds"
+        } else {
+            NATIVE_DOWNLOAD_REPLAY_TIMEOUT_DETAIL
+        };
+        self.fail_native_download_resume_if_still_approved_in_phase(
+            transfer_id,
+            approval_id,
+            Some(phase),
+            detail,
+        );
+    }
+
+    fn fail_native_download_resume_if_still_approved_in_phase(
+        &self,
+        transfer_id: &str,
+        approval_id: &str,
+        phase: Option<super::NativeDownloadReplayPhase>,
+        detail: &str,
+    ) {
         let transfer_id = clean_string(transfer_id);
         let approval_id = clean_string(approval_id);
         let detail = clean_string(detail).chars().take(240).collect::<String>();
@@ -737,6 +772,7 @@ impl ShellxBrowserRegistry {
             };
             if permit.status != NativeDownloadPermitStatus::Approved
                 || permit.approval_id.as_deref() != Some(approval_id.as_str())
+                || phase.is_some_and(|expected| permit.replay_phase != expected)
             {
                 return;
             }

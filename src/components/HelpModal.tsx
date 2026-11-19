@@ -6,7 +6,7 @@
  * click closes.
  */
 import { useRef, type JSX } from "react";
-import { SHORTCUTS } from "../lib/shortcuts";
+import { SHORTCUTS, shortcutKeysForPlatform } from "../lib/shortcuts";
 import { useModalFocus } from "../lib/useModalFocus";
 
 export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
@@ -26,12 +26,17 @@ export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
       <div
         ref={dialogRef}
         className="modal"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
       >
-        <h3>Keyboard shortcuts</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16 }}>
+          <h3>Keyboard shortcuts</h3>
+          <button type="button" className="settings-close" data-dialog-initial-focus="true"
+            aria-label="Close keyboard shortcuts" onClick={onClose}>×</button>
+        </div>
         {Array.from(grouped.entries()).map(([group, items]) => (
           <div key={group} className="modal-section">
             <h4 style={{
@@ -44,7 +49,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
             }}>{group}</h4>
             <div className="modal-grid">
               {items.map((s) => (
-                <Row key={s.id} keys={s.keys} desc={s.desc} />
+                <Row key={s.id} keys={shortcutKeysForPlatform(s.keys)} desc={s.desc} />
               ))}
             </div>
           </div>

@@ -94,6 +94,190 @@ fn repeated_rejected_requests_require_each_ack_before_the_exact_replay() {
 }
 
 #[test]
+fn delayed_ack_claims_one_replay_and_exact_callback_survives_old_timer() {
+    let registry = ShellxBrowserRegistry::default();
+    let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .expect("test home exists");
+    let output = tempfile::Builder::new()
+        .prefix("shellx-native-phase-")
+        .tempdir_in(home)
+        .expect("owned output directory");
+    lock_or_recover(&registry.state).download_folder =
+        Some(output.path().to_string_lossy().into_owned());
+    let (transfer_id, engine_id, binding, source_url) = requested_native_download(&registry);
+    lock_or_recover(&registry.state)
+        .native_download_cancellation_acks
+        .record_rejected_request(&engine_id, &binding, &source_url);
+    let approval = approve(&registry, &transfer_id, &source_url);
+    assert!(registry
+        .activate_native_download_approval(&approval)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].replay_phase,
+        NativeDownloadReplayPhase::AwaitingAck
+    );
+    let BrowserNativeDownloadCancellationAcknowledgement::ReadyResume(resume) =
+        registry.acknowledge_native_download_cancellation(&engine_id, &binding, &source_url)
+    else {
+        panic!("exact final ack releases replay")
+    };
+    assert!(
+        registry
+            .activate_native_download_approval(&approval)
+            .unwrap()
+            .is_none(),
+        "approval and ack cannot dispatch twice"
+    );
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::AwaitingAck,
+    );
+    registry
+        .record_native_download_replay_dispatch(&resume)
+        .unwrap();
+    let phases = lock_or_recover(&registry.state)
+        .receipts
+        .iter()
+        .filter(|receipt| {
+            matches!(
+                receipt.kind.as_str(),
+                "browserNativeDownloadAwaitingCancellation"
+                    | "browserNativeDownloadCancellationAcknowledged"
+                    | "browserNativeDownloadReplayDispatched"
+            )
+        })
+        .map(|receipt| (receipt.kind.clone(), receipt.t, receipt.evidence.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(phases.len(), 3);
+    assert!(phases.windows(2).all(|pair| pair[0].1 <= pair[1].1));
+    assert!(phases
+        .iter()
+        .all(|(_, _, evidence)| *evidence == serde_json::json!({ "transferId": transfer_id })));
+    assert!(registry
+        .native_download_resume_is_eligible(&BrowserNativeDownloadResume {
+            source_url: "https://downloads.example.test/other".to_string(),
+            ..resume.clone()
+        })
+        .is_err());
+    assert!(registry
+        .native_download_resume_is_eligible(&BrowserNativeDownloadResume {
+            event_binding: "wrong-binding".to_string(),
+            ..resume.clone()
+        })
+        .is_err());
+    assert!(matches!(
+        registry.native_download_requested(&engine_id, "wrong-binding", &source_url, None),
+        BrowserNativeDownloadRequested::Reject
+    ));
+    assert!(!matches!(
+        registry.native_download_requested(
+            &engine_id,
+            &binding,
+            "https://downloads.example.test/other",
+            None
+        ),
+        BrowserNativeDownloadRequested::Start { .. }
+    ));
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].status,
+        NativeDownloadPermitStatus::Approved
+    );
+    let destination = match registry.native_download_requested(
+        &engine_id,
+        &binding,
+        &source_url,
+        Some("export.csv"),
+    ) {
+        BrowserNativeDownloadRequested::Start { destination, .. } => destination,
+        _ => panic!("exact callback consumes the replay permit"),
+    };
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::InReplay,
+    );
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].status,
+        NativeDownloadPermitStatus::InProgress
+    );
+    registry.complete_native_download_event(
+        &engine_id,
+        &binding,
+        &source_url,
+        Some(&destination),
+        false,
+    );
+}
+
+#[test]
+fn ack_and_replay_deadlines_fail_only_their_own_phase() {
+    let registry = ShellxBrowserRegistry::default();
+    let (transfer_id, engine_id, binding, source_url) = requested_native_download(&registry);
+    lock_or_recover(&registry.state)
+        .native_download_cancellation_acks
+        .record_rejected_request(&engine_id, &binding, &source_url);
+    let approval = approve(&registry, &transfer_id, &source_url);
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::InReplay,
+    );
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].status,
+        NativeDownloadPermitStatus::Approved
+    );
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::AwaitingAck,
+    );
+    assert_eq!(
+        registry
+            .state()
+            .downloads
+            .iter()
+            .find(|entry| entry.transfer_id == transfer_id)
+            .unwrap()
+            .status,
+        "failed"
+    );
+
+    let registry = ShellxBrowserRegistry::default();
+    let (transfer_id, _engine_id, _binding, source_url) = requested_native_download(&registry);
+    let approval = approve(&registry, &transfer_id, &source_url);
+    registry
+        .activate_native_download_approval(&approval)
+        .unwrap()
+        .unwrap();
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::AwaitingAck,
+    );
+    assert_eq!(
+        lock_or_recover(&registry.state).native_download_permits[&transfer_id].status,
+        NativeDownloadPermitStatus::Approved
+    );
+    registry.fail_native_download_resume_if_still_in_phase(
+        &transfer_id,
+        &approval.approval_id,
+        NativeDownloadReplayPhase::InReplay,
+    );
+    assert_eq!(
+        registry
+            .state()
+            .downloads
+            .iter()
+            .find(|entry| entry.transfer_id == transfer_id)
+            .unwrap()
+            .status,
+        "failed"
+    );
+}
+
+#[test]
 fn wrong_tuple_never_consumes_an_old_cancellation_or_releases_replay() {
     let registry = ShellxBrowserRegistry::default();
     let (transfer_id, engine_id, binding, source_url) = requested_native_download(&registry);

@@ -64,6 +64,41 @@ fn initialize_response_sends_initialized_then_safe_thread_start() {
 }
 
 #[test]
+fn explicit_permission_modes_keep_their_approval_and_sandbox_contracts() {
+    for (mode, approval, sandbox) in [
+        (
+            ProviderPermissionMode::Default,
+            "on-request",
+            "workspace-write",
+        ),
+        (ProviderPermissionMode::ReadOnly, "never", "read-only"),
+        (
+            ProviderPermissionMode::AcceptEdits,
+            "never",
+            "workspace-write",
+        ),
+        (
+            ProviderPermissionMode::BypassPermissions,
+            "never",
+            "danger-full-access",
+        ),
+    ] {
+        let mut protocol = CodexAppServerProtocol::new(config(mode)).unwrap();
+        protocol.start().unwrap();
+        let actions = protocol
+            .handle_line(
+                r#"{"id":1,"result":{"userAgent":"fixture","codexHome":"/tmp/codex","platformFamily":"unix","platformOs":"linux"}}"#,
+            )
+            .unwrap();
+        let CodexAppServerAction::Send(thread) = &actions[1] else {
+            panic!("expected thread request")
+        };
+        assert_eq!(thread["params"]["approvalPolicy"], approval);
+        assert_eq!(thread["params"]["sandbox"], sandbox);
+    }
+}
+
+#[test]
 fn thread_response_records_native_id_and_starts_text_turn() {
     let mut protocol = initialized_protocol();
     let actions = protocol

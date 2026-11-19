@@ -320,8 +320,12 @@ Provider sessions default to ShellX Full Auto, which maps to native provider
 bypass flags (`bypassPermissions`, `--dangerously-bypass-approvals-and-sandbox`,
 or equivalent). This is a trust-boundary decision, not just UI state: ShellX
 can stream and audit many provider events, but native provider tools may run
-without ShellX permission-pill confirmation. The user-facing contract is to
-scope tabs to trusted project folders and trusted local/WSL/SSH environments.
+without ShellX permission-pill confirmation. Select trusted project folders
+and local/WSL/SSH environments. The working directory provides execution
+context, not an operating-system sandbox. Enabled parent-host tools retain
+their separately declared authority: Host `fs_*` is HOME-scoped, including
+allowed files outside the selected project, and host process/diagnostic tools
+are not confined by the remote working directory.
 
 **Trust assumption:** every byte that arrives at a tool came from
 the agent — treat it as adversarial. The tools are not "agent

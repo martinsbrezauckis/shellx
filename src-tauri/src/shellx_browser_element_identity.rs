@@ -89,6 +89,30 @@ pub(crate) const BROWSER_ELEMENT_IDENTITY_SCRIPT: &str = r#"
     }
     return hash.toString(16).padStart(8, "0");
   };
+  const shellxIdentityActionSemantics = (element) => {
+    const tag = String(element?.localName || "").toLowerCase();
+    const role = String(shellxIdentityRole(element)).toLowerCase();
+    const inputType = tag === "input" ? String(element.getAttribute("type") || "text").toLowerCase() : "";
+    const tabIndex = element.getAttribute?.("tabindex");
+    const actionable = ["button", "link", "checkbox", "radio", "option", "tab", "menuitem", "switch"].includes(role)
+      || ["a", "button", "summary"].includes(tag)
+      || (tag === "input" && ["button", "submit", "reset", "image", "checkbox", "radio"].includes(inputType))
+      || (tag !== "input" && tag !== "textarea" && tag !== "select"
+        && tabIndex != null && tabIndex !== "-1");
+    if (!actionable) return "";
+    const root = element.getRootNode?.();
+    const labelledBy = String(element.getAttribute?.("aria-labelledby") || "")
+      .split(/\s+/).filter(Boolean).slice(0, 8)
+      .map((id) => root?.getElementById?.(id)?.innerText || root?.getElementById?.(id)?.textContent || "")
+      .join(" ");
+    const labels = Array.from(element.labels || []).slice(0, 3)
+      .map((label) => label.innerText || label.textContent || "").join(" ");
+    const buttonValue = tag === "input" && ["button", "submit", "reset"].includes(inputType)
+      ? element.value : "";
+    return [element.innerText || element.textContent || "", labelledBy, labels,
+      element.getAttribute?.("title") || "", element.getAttribute?.("alt") || "", buttonValue]
+      .map((value) => shellxIdentityClip(value, 160)).join("~");
+  };
   const shellxElementFingerprint = (element) => {
     if (!element?.localName) return null;
     const stableAttribute = (name) => shellxIdentityClip(element.getAttribute?.(name), 120);
@@ -103,6 +127,7 @@ pub(crate) const BROWSER_ELEMENT_IDENTITY_SCRIPT: &str = r#"
       stableAttribute("type"),
       stableIdentity,
       fallbackLabel,
+      shellxIdentityActionSemantics(element),
       shellxElementDomPath(element)
     ].join("|");
     const reverse = Array.from(raw).reverse().join("");

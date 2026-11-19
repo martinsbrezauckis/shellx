@@ -1362,7 +1362,18 @@ fn build_objective_requires_preview(objective: &str) -> bool {
         || has_phrase(&["non", "ui"])
         || has_phrase(&["not", "ui"])
         || has_phrase(&["without", "ui"])
+        || has_phrase(&["no", "application", "code", "or", "ui"])
+        || has_phrase(&["skip", "unrelated", "ui", "previews"])
         || has_word("headless");
+
+    // A data-only request can mention files such as dist/index.html or say
+    // "skip UI previews". Those mentions do not request visual work.
+    if explicitly_non_visual
+        && has_phrase(&["data", "file"])
+        && (has_phrase(&["plain", "text"]) || has_phrase(&["text", "data"]))
+    {
+        return false;
+    }
 
     let library_or_service_work = has_word("sdk")
         || has_word("api")
@@ -1832,6 +1843,48 @@ fn evaluate_blocker_recheck(
             matched_receipt_id: None,
             matched_subagent_id: None,
         };
+    }
+
+    if blocker
+        .trim()
+        .strip_prefix("build_complete rejected: code changed but no checkpoint receipt exists")
+        .is_some_and(|suffix| suffix.is_empty() || suffix == "." || suffix.starts_with(". "))
+        && state.status == BuildRunStatus::Blocked
+    {
+        if let Some(checkpoint_id) = state
+            .checkpoint_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            if let Some(open_index) = receipts.iter().rposition(|receipt| {
+                receipt.kind == BuildReceiptKind::BlockerOpened
+                    && receipt.run_id == state.run_id
+                    && receipt.tab_id == state.tab_id
+                    && receipt.summary == blocker
+            }) {
+                let opened_at_ms = receipts[open_index].created_at_ms;
+                if let Some(receipt) = receipts[open_index + 1..].iter().rev().find(|receipt| {
+                    receipt.kind == BuildReceiptKind::CheckpointCreated
+                        && receipt.confidence == BuildReceiptConfidence::TrustedHost
+                        && receipt.run_id == state.run_id
+                        && receipt.tab_id == state.tab_id
+                        && receipt.created_at_ms >= opened_at_ms
+                        && receipt
+                            .data
+                            .get("checkpointUnavailable")
+                            .and_then(|v| v.as_bool())
+                            != Some(true)
+                        && receipt.data.get("checkpointId").and_then(|v| v.as_str())
+                            == Some(checkpoint_id)
+                }) {
+                    return blocker_cleared(
+                        "Blocker cleared; this run has a new trusted checkpoint receipt.",
+                        Some(receipt),
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     let blocker_lower = blocker.to_ascii_lowercase();

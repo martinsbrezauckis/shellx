@@ -160,6 +160,58 @@ fn posix_provider_paths_cover_supported_user_install_roots() {
     assert!(paths.contains(&PathBuf::from("/home/fixture/.cargo/bin")));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn posix_child_path_runs_npm_node_launcher_only_when_node_is_present() {
+    use std::os::unix::fs::PermissionsExt as _;
+    use tokio::process::Command;
+
+    let root = tempfile::tempdir().expect("fixture directory");
+    let empty = root.path().join("empty");
+    let node_bin = root.path().join("node-bin");
+    std::fs::create_dir(&empty).expect("empty PATH directory");
+    std::fs::create_dir(&node_bin).expect("Node PATH directory");
+    let node = node_bin.join("node");
+    std::fs::write(&node, b"#!/bin/sh\nprintf 'fixture-codex 1.0\\n'\n")
+        .expect("fixture Node executable");
+    std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755))
+        .expect("make fixture Node executable");
+    let launcher = root.path().join("codex");
+    std::fs::write(&launcher, b"#!/usr/bin/env node\n").expect("npm-style launcher");
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))
+        .expect("make npm-style launcher executable");
+
+    let restricted =
+        posix_provider_child_path_in_dirs(std::slice::from_ref(&empty)).expect("restricted PATH");
+    let mut absent = Command::new(&launcher);
+    absent.arg("--version");
+    apply_local_provider_child_path_value(&mut absent, false, Some(restricted.clone()));
+    let failed = absent.output().await.expect("run launcher without Node");
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("node"));
+
+    let repaired = posix_provider_child_path_in_dirs(&[node_bin, empty]).expect("child PATH");
+    let mut present = Command::new(&launcher);
+    present.arg("--version");
+    apply_local_provider_child_path_value(&mut present, false, Some(repaired.clone()));
+    let passed = present.output().await.expect("run launcher with Node");
+    assert!(passed.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&passed.stdout),
+        "fixture-codex 1.0\n"
+    );
+
+    let mut overridden = Command::new(&launcher);
+    overridden.arg("--version").env("PATH", restricted);
+    apply_local_provider_child_path_value(&mut overridden, true, Some(repaired));
+    let overridden_output = overridden
+        .output()
+        .await
+        .expect("run explicit PATH override");
+    assert!(!overridden_output.status.success());
+    assert!(String::from_utf8_lossy(&overridden_output.stderr).contains("node"));
+}
+
 #[test]
 fn remote_preludes_share_the_complete_provider_path_contract() {
     for suffix in [

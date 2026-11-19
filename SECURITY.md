@@ -57,9 +57,15 @@ boundaries".
 
 ShellX's normal agent workflow is Full Auto. Provider sessions and Build
 work can run with provider-native bypass permission flags. Report issues
-where the UI or docs hide that mode, where Full Auto reaches a broader
-filesystem/environment than the selected project, or where secrets are
-logged while auto tools are running.
+where the UI or docs hide that mode, where ShellX-mediated actions exceed
+their declared project or parent-host boundary, or where secrets are logged
+while auto tools are running. A working folder provides execution context;
+it is not an operating-system sandbox for a provider using bypass flags.
+Enabled parent-host `fs_*` tools have a separate HOME boundary and sensitive-
+path restrictions, including for WSL/SSH callers. Host process and diagnostic
+tools retain their declared host scope. These distinctions do not waive
+Browser approvals, Vault grants, caller binding, or project-bound file RPC
+controls. See the architecture's four trust boundaries for each contract.
 
-Last reviewed: 2026-08-25. Review this policy with each stable release and
+Last reviewed: 2026-11-18. Review this policy with each stable release and
 whenever the Browser, Vault, updater, or host-MCP trust boundary changes.

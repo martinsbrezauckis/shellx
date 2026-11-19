@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn approved_native_replay_uses_exact_url_as_a_download_intent() {
+    let script = native_download_replay_script(
+        "http://127.0.0.1:8766/tiny.txt?name=\"quoted\"&next=</script>",
+    )
+    .expect("URL encodes for browser eval");
+    assert!(script.contains("link.download = ''"));
+    assert!(script.contains("link.click()"));
+    assert!(script.contains("http://127.0.0.1:8766/tiny.txt?name=\\\"quoted\\\"&next=</script>"));
+    assert!(!script.contains("window.location.assign"));
+    assert!(!script.contains("fetch("));
+}
+
 fn download_request(index: usize, native: bool) -> BrowserDownloadRequest {
     BrowserDownloadRequest {
         url: format!("https://downloads.example.test/fixture-{index}.bin"),

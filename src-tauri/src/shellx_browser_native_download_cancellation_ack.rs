@@ -85,7 +85,7 @@ impl NativeDownloadCancellationAcks {
         Ok(())
     }
 
-    pub(super) fn has_pending(
+    pub(crate) fn has_pending(
         &self,
         engine_id: &str,
         event_binding: &str,
@@ -186,6 +186,22 @@ impl ShellxBrowserRegistry {
         {
             return BrowserNativeDownloadCancellationAcknowledgement::Consumed;
         }
+        if permit.replay_phase != NativeDownloadReplayPhase::AwaitingAck {
+            return BrowserNativeDownloadCancellationAcknowledgement::Consumed;
+        }
+        state
+            .native_download_permits
+            .get_mut(&transfer_id)
+            .expect("native permit was checked while holding the state lock")
+            .replay_phase = NativeDownloadReplayPhase::InReplay;
+        crate::shellx_browser::push_receipt(
+            &mut state,
+            "browserNativeDownloadCancellationAcknowledged",
+            permit.task_id.clone(),
+            None,
+            "Native download cancellation acknowledged".to_string(),
+            serde_json::json!({ "transferId": transfer_id }),
+        );
         BrowserNativeDownloadCancellationAcknowledgement::ReadyResume(BrowserNativeDownloadResume {
             transfer_id,
             approval_id,
@@ -220,6 +236,7 @@ impl ShellxBrowserRegistry {
                 "native Browser download permit was removed before replay".to_string()
             })?;
         if permit.status != NativeDownloadPermitStatus::Approved
+            || permit.replay_phase != NativeDownloadReplayPhase::InReplay
             || permit.engine_id != resume.engine_id
             || permit.event_binding != resume.event_binding
             || permit.source_url != resume.source_url

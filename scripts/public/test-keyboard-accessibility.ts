@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
-import { SHORTCUTS } from "../../src/lib/shortcuts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { SHORTCUTS, shortcutKeysForPlatform } from "../../src/lib/shortcuts";
+import { HelpModal } from "../../src/components/HelpModal";
 import { normalizedTextContent } from "./lib/text-content";
 import { readAppStyles } from "./lib/app-styles";
 
@@ -142,6 +145,44 @@ assert(toggleTerminal, "toggle-terminal shortcut must remain registered");
 assert.equal(toggleTerminal.keys, "Ctrl+Shift+M", "the terminal shortcut label must describe the cross-platform chord");
 const closeSession = SHORTCUTS.find((shortcut) => shortcut.id === "close-session");
 assert(closeSession && closeSession.keys === "⌘W", "session close keeps its promised Mac chord");
+for (const [id, mac, windows] of [
+  ["palette", "⌘K", "Ctrl+K"],
+  ["settings", "⌘,", "Ctrl+,"],
+  ["new-session", "⌘T", "Ctrl+T"],
+  ["close-session", "⌘W", "Ctrl+W"],
+  ["attach", "⌘U", "Ctrl+U"],
+]) {
+  const shortcut = SHORTCUTS.find((entry) => entry.id === id);
+  assert(shortcut);
+  assert.equal(shortcutKeysForPlatform(shortcut.keys, "MacIntel"), mac);
+  assert.equal(shortcutKeysForPlatform(shortcut.keys, "Win32"), windows);
+  assert.equal(shortcutKeysForPlatform(shortcut.keys, "Linux x86_64"), windows);
+}
+assert.equal(shortcutKeysForPlatform("Ctrl+Shift+M", "Win32"), "Ctrl+Shift+M");
+const helpModal = readFileSync("src/components/HelpModal.tsx", "utf8");
+assert(helpModal.includes('data-dialog-initial-focus="true"')
+  && helpModal.includes('aria-label="Close keyboard shortcuts"')
+  && helpModal.includes('tabIndex={-1}')
+  && helpModal.includes("shortcutKeysForPlatform(s.keys)"),
+"Help must present the platform chord and an initially focused dismiss control");
+const navigatorBeforeHelp = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+try {
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "Win32" } });
+  const windowsHelp = renderToStaticMarkup(createElement(HelpModal, { onClose: () => {} }));
+  for (const chord of ["Ctrl+K", "Ctrl+,", "Ctrl+T", "Ctrl+W", "Ctrl+U"]) {
+    assert(windowsHelp.includes(chord), `Windows Help should show ${chord}`);
+  }
+  assert(!windowsHelp.includes("⌘"), "Windows Help must not show Mac command glyphs");
+  assert(windowsHelp.includes('aria-label="Close keyboard shortcuts"')
+    && windowsHelp.includes('data-dialog-initial-focus="true"')
+    && windowsHelp.includes('tabindex="-1"'), "Help must have an in-dialog focus and close target");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "MacIntel" } });
+  const macHelp = renderToStaticMarkup(createElement(HelpModal, { onClose: () => {} }));
+  assert(macHelp.includes("⌘K") && !macHelp.includes("Ctrl+K"), "Mac Help keeps the command glyph");
+} finally {
+  if (navigatorBeforeHelp) Object.defineProperty(globalThis, "navigator", navigatorBeforeHelp);
+  else Reflect.deleteProperty(globalThis, "navigator");
+}
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform: "MacIntel" } });
 try {
@@ -240,7 +281,7 @@ assert(
   "composer connection help must advertise only routes the Connection Editor can create",
 );
 assert(
-  bottomPanel.includes('title="Pick branch for this tab"') &&
+  bottomPanel.includes('title="Select a reference branch; Git HEAD and the agent folder stay unchanged"') &&
     !bottomPanel.includes("also offers +create worktree from branch"),
   "composer branch help must not promise worktree creation that lives in the Git rail",
 );

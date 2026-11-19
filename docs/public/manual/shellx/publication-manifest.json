@@ -1,7 +1,7 @@
 {
   "schema": "shellx.manual-publication-manifest.v1",
-  "version": "0.3.62",
-  "revision": 48,
+  "version": "0.3.63",
+  "revision": 49,
   "generatedBy": "ShellX canonical manual source",
   "manifest": {
     "sourcePath": "docs/public/manual/shellx/publication-manifest.json",
@@ -21,19 +21,19 @@
       "sourcePath": "docs/public/SHELLX_MANUAL.md",
       "publicExportPath": "docs/public/SHELLX_MANUAL.md",
       "docsSitePath": null,
-      "sha256": "2654872ebdd009246c5c387276c03d20208e19f9749be2c92211749102f6be17"
+      "sha256": "19a611da7c82ab0649aba9bc69f64dd5d2dbbb42605a916e78adca00d7b24f68"
     },
     {
       "sourcePath": "docs/public/manual/shellx/content.json",
       "publicExportPath": "docs/public/manual/shellx/content.json",
       "docsSitePath": "manual/shellx/content.json",
-      "sha256": "893ab0b3c961ebe4a972ef75a00d26a2941283ab975670151d5d1872737b1690"
+      "sha256": "bf3836d7ffb26ca07843be8a7baf23fbf0a26dd70f99ce49cc426311d58b23e4"
     },
     {
       "sourcePath": "docs/public/manual/shellx/index.html",
       "publicExportPath": "docs/public/manual/shellx/index.html",
       "docsSitePath": "manual/shellx/index.html",
-      "sha256": "af8242e186fa3ada3894d4076c8ee21ac21025dee8e518263b3c40518b6f36a9"
+      "sha256": "b7a21b534c9af7be4b4bcbd5a12d42b4491f8fcdabd957783eea9d70f8a96788"
     },
     {
       "sourcePath": "docs/public/manual/shellx/interface.json",
@@ -54,10 +54,10 @@
       "sha256": "d38ac010be790ac6a2efb5b2a85b30aaacf1ee6884a0bba9f0b94d9de7e5fd9d"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
-      "docsSitePath": "manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
-      "sha256": "c4bfbb426084b59f5c9a2bf6e771136308a4fe5c06a85efa3c6284c584f02872"
+      "sourcePath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-bit8OU6e.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-bit8OU6e.js",
+      "docsSitePath": "manual/shellx/app/assets/ActivityBrowserModal-bit8OU6e.js",
+      "sha256": "8f6385ffe1a4b24089bef57ae537d4cbaebd3569e0ef3685534c6264e236cf2a"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-gznTo7mf.css",
@@ -78,10 +78,10 @@
       "sha256": "e83e5e771be6ffa5a12c0a5391e970515a01703eab3db0043fd4818e3f9331ba"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
-      "docsSitePath": "manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
-      "sha256": "9f20e96f2d4d135bcfd3cb132059d217f4f3f6ae8565195f1c041fec900cdc80"
+      "sourcePath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-BC9zxcnU.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-BC9zxcnU.js",
+      "docsSitePath": "manual/shellx/app/assets/AgentCliStatusCard-BC9zxcnU.js",
+      "sha256": "47ee2d6ecdcb4f90b3a9f64327dcc0a26ad56a7df644e242f6232261945af92b"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CmiwnM2A.css",
@@ -90,10 +90,10 @@
       "sha256": "a450dbae2b03804ea1c3c50cd551f16a05fcb773b35b8d4a44a5a497504f7036"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
-      "docsSitePath": "manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
-      "sha256": "23363ec17bd426702a3618347e1ffaa4fc20ce6f4c53ad8a288b47300dd4c5fe"
+      "sourcePath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CpanHMO3.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CpanHMO3.js",
+      "docsSitePath": "manual/shellx/app/assets/AttachmentMediaBoard-CpanHMO3.js",
+      "sha256": "ff87d2ad1441d05bde64a6c14b2c79ab90516a4956471b4acd7636dcc441cad0"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/BookmarkSidecar-BGp5kbpZ.css",
@@ -150,16 +150,16 @@
       "sha256": "f2299af3bed7bc6ff23b3fcf8644046d761b6d332277dbfec3763adf3d4d3fb0"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
-      "docsSitePath": "manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
-      "sha256": "719328a9e95903e069f939047aba1fc3d4ce9fce3ca4a8e2722e5049aa7d150a"
+      "sourcePath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-z83uwDdP.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-z83uwDdP.js",
+      "docsSitePath": "manual/shellx/app/assets/BuildRunCockpit-z83uwDdP.js",
+      "sha256": "a5250cdcb8c36e9d8913784e62afc926520aaf99a9a981c2ee4dcbc85ad092c5"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
-      "docsSitePath": "manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
-      "sha256": "dffd740850799c1045f1e3c86701db65fed2df77c1d927a7baf66a3b1f843db9"
+      "sourcePath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BV6Lsiku.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BV6Lsiku.js",
+      "docsSitePath": "manual/shellx/app/assets/BuiltinDocModal-BV6Lsiku.js",
+      "sha256": "0068618b203d4c5c2080ea1f61c92c9053867811a17e4bd1daf685e372964392"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/CommandPalette-Bi6y7NKW.js",
@@ -174,16 +174,16 @@
       "sha256": "a2a3883d68153aefaab85d8f350ae4b26d53ef1b1430c2e1e9a8e520abbb7f8d"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
-      "docsSitePath": "manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
-      "sha256": "a86c28aae81c8d597105a74546e614a77e3ca4a6d9d46bed4ca2b91546f1b6c7"
+      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectionEditor-D_kdya4D.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectionEditor-D_kdya4D.js",
+      "docsSitePath": "manual/shellx/app/assets/ConnectionEditor-D_kdya4D.js",
+      "sha256": "be4216cdabb18de5a6e609bc8634b47cfd7067d9ee83a8189f737813a40ba999"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
-      "docsSitePath": "manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
-      "sha256": "a1c58aa214e5be62803b08611108a3fe07b9b5763157217929433c0620b7e476"
+      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-BcWeg24X.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-BcWeg24X.js",
+      "docsSitePath": "manual/shellx/app/assets/ConnectorInboxModal-BcWeg24X.js",
+      "sha256": "6a2f87ece38f3fb980768b8ecab38277bccf64180b3f852abc323901527fd010"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-nlrUQaI9.css",
@@ -198,16 +198,16 @@
       "sha256": "25df659a7f109b40558811bd0e23757d1a02df51a3742d3659a4596f258a2748"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/FilesPane-Db173xGt.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/FilesPane-Db173xGt.js",
-      "docsSitePath": "manual/shellx/app/assets/FilesPane-Db173xGt.js",
-      "sha256": "31665bb04e6669fa07c9697d1b43d213872b70dd6fda504aa2db05a979f15697"
+      "sourcePath": "docs/public/manual/shellx/app/assets/FilesPane-eyMzT5Ay.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/FilesPane-eyMzT5Ay.js",
+      "docsSitePath": "manual/shellx/app/assets/FilesPane-eyMzT5Ay.js",
+      "sha256": "f95e2e07920d523a5c2dceecb64ed9ddc5b1f9b9bdc4021e5eddf8b0472fcc65"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
-      "docsSitePath": "manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
-      "sha256": "8827b978aef532a892e0c8c22ba17d0ce5cdfa39a81d21acdd719f1183154482"
+      "sourcePath": "docs/public/manual/shellx/app/assets/HelpModal-0sMO7yTK.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/HelpModal-0sMO7yTK.js",
+      "docsSitePath": "manual/shellx/app/assets/HelpModal-0sMO7yTK.js",
+      "sha256": "679aa71ec0dbf3a4b3e0b2b96f1f11a3f1388bb477bf51b216953d6e604a63e3"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/LazySurface-CCHXqsEn.css",
@@ -240,10 +240,10 @@
       "sha256": "f5ac70f3ead666d7aba98c7b89aec478686c80ec5fffa9f1e96e40d2926ca636"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
-      "docsSitePath": "manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
-      "sha256": "145ce8bb9f97d49db53d59a9a0cc93b8923ce3c19792f816e06e1ca22086c164"
+      "sourcePath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-CTNU9t3M.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-CTNU9t3M.js",
+      "docsSitePath": "manual/shellx/app/assets/SessionHistoryViewer-CTNU9t3M.js",
+      "sha256": "38891878f5c90daf4be1e15125f24dfea95e04e2edcb9e05087f63be53f66456"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/Settings-BW-ibDm1.css",
@@ -252,10 +252,10 @@
       "sha256": "3060a721dd8a6cd35f81489098dbdda59dac71a8d8f3623b1085aa1089acebac"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/Settings-Di5zV34O.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/Settings-Di5zV34O.js",
-      "docsSitePath": "manual/shellx/app/assets/Settings-Di5zV34O.js",
-      "sha256": "fc9b5276c3ff55a241d0d6422a27a352ba016bfd1e4ac0cd410460e95f0e7d84"
+      "sourcePath": "docs/public/manual/shellx/app/assets/Settings-hLzVtxdf.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/Settings-hLzVtxdf.js",
+      "docsSitePath": "manual/shellx/app/assets/Settings-hLzVtxdf.js",
+      "sha256": "2f73b405c9c997f4618bf77f910fad319fd476d6f9d878b8d9bf250828c6fa34"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/TaskManager-D_bSyQjE.css",
@@ -264,10 +264,10 @@
       "sha256": "2f77e84f231fb5a8fb2452a5c31d074821b0c7791635f6e72319a11c4081b3bf"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
-      "docsSitePath": "manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
-      "sha256": "ad24023f673c658fcfa42df8ef2d829ea1022948b3c923a0769690b6ea84827d"
+      "sourcePath": "docs/public/manual/shellx/app/assets/TaskManager-gMZvNctZ.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/TaskManager-gMZvNctZ.js",
+      "docsSitePath": "manual/shellx/app/assets/TaskManager-gMZvNctZ.js",
+      "sha256": "35682ba1585417d5252241dac1abead8529fea6aeef6658c4d1328f0486a4a12"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/TerminalView-CTfzWMEm.js",
@@ -282,10 +282,10 @@
       "sha256": "7e36144c026deb7f9fed746f2308be8fef579d9bbc267d25bd5586c6ae697d58"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
-      "docsSitePath": "manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
-      "sha256": "8755378d07b7e5824f4fac11d99f00a6690e2f1e75953898db7c2ee630bac0be"
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultPanel-Dodm4tMd.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultPanel-Dodm4tMd.js",
+      "docsSitePath": "manual/shellx/app/assets/VaultPanel-Dodm4tMd.js",
+      "sha256": "f4fd2cfbb878e980a4d6fa6d69944c1d2dc8c3da96fb1af70e7ee93698e9a5b2"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/VaultPasswordGenerator-Cj-lZ1rD.js",
@@ -312,10 +312,10 @@
       "sha256": "a980326c87523a88b8e316bcaadb5a495812704d111a88316dcde69e647d76f9"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
-      "docsSitePath": "manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
-      "sha256": "5df31c8a7af47a6228e3275fab187c6a5576803d5928d512178ea7142157862f"
+      "sourcePath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-B5VfQbZv.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-B5VfQbZv.js",
+      "docsSitePath": "manual/shellx/app/assets/WorkPreviewPanel-B5VfQbZv.js",
+      "sha256": "5a076209b6e4f9128a85a2fb7aa7f676ace7ef020b5ba2de3f497f561ab8f277"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/brand-shellx-DVYaB5PR.png",
@@ -396,10 +396,10 @@
       "sha256": "33478e8acb035008f8ff79dfa795f8423d15ff1e81c03c086e9102414cd8dc39"
     },
     {
-      "sourcePath": "docs/public/manual/shellx/app/assets/shellx-CESBtrKy.js",
-      "publicExportPath": "docs/public/manual/shellx/app/assets/shellx-CESBtrKy.js",
-      "docsSitePath": "manual/shellx/app/assets/shellx-CESBtrKy.js",
-      "sha256": "58f852c38240785bd6959212dcbb7b0acf7a9027581f04c371ee290a68355d64"
+      "sourcePath": "docs/public/manual/shellx/app/assets/shellx-Bye1Wj_x.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/shellx-Bye1Wj_x.js",
+      "docsSitePath": "manual/shellx/app/assets/shellx-Bye1Wj_x.js",
+      "sha256": "f740fb539262f96313d81a7051629b0667d6a5dcfc07e3fc21add7330a599559"
     },
     {
       "sourcePath": "docs/public/manual/shellx/app/assets/shellx-CvLnijx1.css",
@@ -441,7 +441,7 @@
       "sourcePath": "docs/public/manual/shellx/app/manual-shellx.html",
       "publicExportPath": "docs/public/manual/shellx/app/manual-shellx.html",
       "docsSitePath": "manual/shellx/app/manual-shellx.html",
-      "sha256": "9359404d15237742558fe97ba6e4927e30a1d3b02119ea2c40c16d9316850552"
+      "sha256": "2e2fc69fcdec3dd9092dac73efde4c6d6f17bad8c7c729a11eef597452cf6393"
     }
   ]
 }

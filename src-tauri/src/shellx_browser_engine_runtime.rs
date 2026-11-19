@@ -156,18 +156,19 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
     event_binding: String,
 ) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY,
-        COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
-        COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
-        COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        ICoreWebView2PermissionRequestedEventArgs3, COREWEBVIEW2_PERMISSION_KIND,
+        COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+        COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ, COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE,
+        COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION, COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS,
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
         COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
         COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
         COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
-        COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        COREWEBVIEW2_PERMISSION_STATE_DENY,
     };
     use webview2_com::{take_pwstr, PermissionRequestedEventHandler};
-    use windows::core::PWSTR;
-
+    use windows::core::{Interface, PWSTR};
     fn browser_permission_kind_from_webview2(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
         match kind {
             COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS => "notifications",
@@ -213,6 +214,26 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
                             args.PermissionKind(&mut kind as *mut _)?;
                             let mut is_user_initiated = windows::core::BOOL::from(false);
                             args.IsUserInitiated(&mut is_user_initiated as *mut _)?;
+                            if kind == COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS
+                                && event_registry.claim_webview2_native_download_replay_permission(
+                                    &event_engine_id,
+                                    &event_binding,
+                                    &requested_url,
+                                )
+                            {
+                                // Do not persist this event; exact download approval stays mandatory.
+                                if let Ok(scoped_args) =
+                                    args.cast::<ICoreWebView2PermissionRequestedEventArgs3>()
+                                {
+                                    if scoped_args.SetSavesInProfile(false).is_ok()
+                                        && args
+                                            .SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)
+                                            .is_ok()
+                                    {
+                                        return Ok(());
+                                    }
+                                }
+                            }
                             args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
                             let _ = event_registry.record_bound_engine_permission_event(
                                 &event_engine_id,

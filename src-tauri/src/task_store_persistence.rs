@@ -2,12 +2,13 @@
 
 use super::task_store_occurrences::{
     revision_for_occurrence_store, validate_lease_id, validate_lease_owner,
-    validate_provider_decision,
+    validate_provider_decision, MAX_PROVIDER_CATALOG_CLOCK_SKEW_MS,
 };
 use super::{PersistedTaskStore, TaskStoreError};
 use crate::task_model::{
     canonical_revision_hash, deterministic_occurrence_id, execution_receipt_payload,
     normalize_and_validate_draft, TaskAttemptState, TaskExecutionTransition, TaskOccurrenceState,
+    TaskProviderDecisionReceipt, TaskProviderDecisionStage, TaskProviderDecisionVerdict,
     TASK_STORE_SCHEMA_VERSION,
 };
 use crate::task_receipts::TaskReceiptKind;
@@ -299,6 +300,30 @@ pub(crate) fn validate_store(store: &PersistedTaskStore) -> Result<(), String> {
                 || attempt.updated_at_ms < attempt.created_at_ms
             {
                 return Err("task occurrence attempt state is invalid".to_string());
+            }
+            if let Some(start) = &attempt.committed_start {
+                let decision = TaskProviderDecisionReceipt {
+                    catalogue_snapshot_id: start.catalogue_snapshot_id.clone(),
+                    catalogue_generated_at_ms: start.catalogue_generated_at_ms,
+                    catalogue_fresh_until_ms: start.catalogue_fresh_until_ms,
+                    stage: TaskProviderDecisionStage::CommittedStart,
+                    candidate_order: start.candidate_order,
+                    provider_id: start.provider_id.clone(),
+                    model: start.model.clone(),
+                    verdict: TaskProviderDecisionVerdict::Started,
+                    reason_code: Some("providerAccepted".to_string()),
+                    session_id: None,
+                };
+                if start.committed_at_ms < attempt.created_at_ms
+                    || start.catalogue_generated_at_ms
+                        > start
+                            .committed_at_ms
+                            .saturating_add(MAX_PROVIDER_CATALOG_CLOCK_SKEW_MS)
+                    || start.catalogue_fresh_until_ms < start.committed_at_ms
+                    || validate_provider_decision(&revision, &decision).is_err()
+                {
+                    return Err("task attempt committed start is invalid".to_string());
+                }
             }
             if attempt.state == TaskAttemptState::Running {
                 running.push(attempt);

@@ -64,7 +64,8 @@ pub(crate) fn handle_wry_native_browser_download_event(
     event: DownloadEvent<'_>,
 ) -> bool {
     use crate::shellx_browser_transfers::{
-        resume_native_browser_download, BrowserNativeDownloadCancellationAcknowledgement,
+        resume_native_browser_download, schedule_native_download_phase_timeout,
+        BrowserNativeDownloadCancellationAcknowledgement, NativeDownloadReplayPhase,
     };
     if let DownloadEvent::Finished {
         url,
@@ -85,6 +86,12 @@ pub(crate) fn handle_wry_native_browser_download_event(
                 BrowserNativeDownloadCancellationAcknowledgement::Ignore => {}
                 BrowserNativeDownloadCancellationAcknowledgement::Consumed => return true,
                 BrowserNativeDownloadCancellationAcknowledgement::ReadyResume(resume) => {
+                    schedule_native_download_phase_timeout(
+                        registry,
+                        &resume.transfer_id,
+                        &resume.approval_id,
+                        NativeDownloadReplayPhase::InReplay,
+                    );
                     let app = webview.app_handle().clone();
                     let registry = Arc::clone(registry);
                     // Resume outside the native terminal callback to avoid

@@ -41,7 +41,7 @@ fn truncate_string(value: &str, max_chars: usize) -> (String, bool, usize) {
         return (value.to_string(), false, original_chars);
     }
     let mut truncated = value.chars().take(max_chars).collect::<String>();
-    truncated.push_str("\n[truncated by ShellX MCP observe; use browser_extract, browser_save_page, or browser_trace_open for full content]");
+    truncated.push_str("\n[truncated by ShellX MCP observe; use browser_read action=extract for page text, browser_act action=savePage for an approved saved copy, or browser_act action=traceOpen for bounded diagnostics]");
     (truncated, true, original_chars)
 }
 
@@ -280,7 +280,7 @@ pub(super) fn browser_compact_observe_result_for_mcp(mut data: Value, args: &Val
     observation.insert("mcpCompacted".to_string(), json!(true));
     observation.insert(
         "mcpHint".to_string(),
-        json!("browser_observe has a total MCP payload budget; use maxPayloadBytes with the existing count/text controls, browser_extract, or browser_trace_open for deeper page content."),
+        json!("browser_read action=observe has a total MCP payload budget; use maxPayloadBytes with the existing count/text controls, browser_read action=extract for page text, or browser_act action=traceOpen for bounded diagnostics."),
     );
     compact_observation_items(observation);
     if let Some(receipt) = data.get_mut("receipt") {

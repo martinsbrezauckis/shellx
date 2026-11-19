@@ -121,6 +121,92 @@ fn remote_project_config_uses_posix_stdio_commands() {
     assert!(!windows_block.contains("command = \"cmd.exe\""));
 }
 
+#[cfg(unix)]
+#[test]
+fn appimage_uvx_marketplace_launch_keeps_external_python_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "shellx-marketplace-uvx-env-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let home = root.join("home");
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let fake_uvx = bin.join("uvx");
+    std::fs::write(
+        &fake_uvx,
+        "#!/bin/sh\nprintf '%s\\n%s\\n' \"${PYTHONHOME-<unset>}\" \"${PYTHONPATH-<unset>}\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_uvx, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let appdir = root.join("appimage-root");
+    let (command, args) = posix_stdio_command_with_user_path("uvx", &["mcp-server-git"]);
+    assert_eq!(command, "bash");
+    let git = CATALOG.iter().find(|entry| entry.id == "git").unwrap();
+    let acp = acp_server_for_entry(git, MarketplaceAcpRuntime::Posix, &HashMap::new())
+        .expect("POSIX ACP Git entry");
+    assert_eq!(acp["command"], "/usr/bin/env");
+    assert_eq!(acp["args"], serde_json::json!(["bash", "-lc", args[1]]));
+    let run = |appimage: bool, python_home: &str, python_path: &str| {
+        let mut process = std::process::Command::new(&command);
+        process
+            .args(&args)
+            .env("HOME", &home)
+            .env("APPDIR", &appdir)
+            .env("PYTHONHOME", python_home)
+            .env("PYTHONPATH", python_path);
+        if appimage {
+            process.env("APPIMAGE", root.join("shellx.AppImage"));
+        } else {
+            process.env_remove("APPIMAGE");
+        }
+        let output = process.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    assert_eq!(
+        run(
+            true,
+            &appdir.join("usr").to_string_lossy(),
+            &format!(
+                "{}:/owned/python",
+                appdir.join("usr/share/pyshared").display()
+            ),
+        ),
+        "<unset>\n/owned/python\n"
+    );
+    assert_eq!(
+        run(true, "/external/python", "/external/modules"),
+        "/external/python\n/external/modules\n"
+    );
+    assert_eq!(
+        run(
+            false,
+            &appdir.join("usr").to_string_lossy(),
+            &appdir.join("usr/share/pyshared").to_string_lossy(),
+        ),
+        format!(
+            "{}\n{}\n",
+            appdir.join("usr").display(),
+            appdir.join("usr/share/pyshared").display()
+        )
+    );
+    let (_, npx_args) = posix_stdio_command_with_user_path("npx", &["-y", "test-package"]);
+    assert!(!npx_args[1].contains("_shellx_python_tail"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn acp_stdio_entries_use_absolute_cross_host_launchers() {
     let context7 = CATALOG.iter().find(|entry| entry.id == "context7").unwrap();
@@ -198,6 +284,147 @@ fn project_marketplace_cleanup_preserves_user_sections() {
     assert!(!updated.contains("shellx-mp-context7"));
     assert!(!cleanup_project_marketplace_config(&root).unwrap());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+const PROJECT_MIGRATION_CONFIG: &str = "[mcp_servers.keep]\ncommand = \"keep\"\n\n# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n[mcp_servers.shellx-mp-context7]\ncommand = \"npx\"\n# shellX:managed-mcp-marketplace:context7 END\n";
+
+#[cfg(unix)]
+#[test]
+fn project_marketplace_cleanup_refuses_linked_directory_and_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let victim = outside.join("config.toml");
+    std::fs::write(&victim, PROJECT_MIGRATION_CONFIG).unwrap();
+
+    let config_dir = project.join(".grok");
+    std::os::unix::fs::symlink(&outside, &config_dir).unwrap();
+    assert!(cleanup_project_marketplace_config(&project).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        PROJECT_MIGRATION_CONFIG
+    );
+
+    std::fs::remove_file(&config_dir).unwrap();
+    std::fs::create_dir(&config_dir).unwrap();
+    std::os::unix::fs::symlink(&victim, config_dir.join("config.toml")).unwrap();
+    assert!(cleanup_project_marketplace_config(&project).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        PROJECT_MIGRATION_CONFIG
+    );
+}
+
+#[test]
+fn project_marketplace_cleanup_refuses_multiply_linked_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let config_dir = project.join(".grok");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let victim = directory.path().join("outside.toml");
+    std::fs::write(&victim, PROJECT_MIGRATION_CONFIG).unwrap();
+    std::fs::hard_link(&victim, config_dir.join("config.toml")).unwrap();
+    assert!(cleanup_project_marketplace_config(&project).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        PROJECT_MIGRATION_CONFIG
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn project_marketplace_cleanup_preserves_config_inode_and_mode() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let directory = tempfile::tempdir().unwrap();
+    let config_dir = directory.path().join(".grok");
+    std::fs::create_dir(&config_dir).unwrap();
+    let config = config_dir.join("config.toml");
+    std::fs::write(&config, PROJECT_MIGRATION_CONFIG).unwrap();
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let before = std::fs::metadata(&config).unwrap();
+    assert!(cleanup_project_marketplace_config(directory.path()).unwrap());
+    let after = std::fs::metadata(&config).unwrap();
+    assert_eq!(after.ino(), before.ino());
+    assert_eq!(after.permissions().mode() & 0o777, 0o640);
+    let updated = std::fs::read_to_string(&config).unwrap();
+    assert!(updated.contains("[mcp_servers.keep]"));
+    assert!(!updated.contains("shellx-mp-context7"));
+    assert!(!cleanup_project_marketplace_config(directory.path()).unwrap());
+}
+
+#[test]
+fn grok_config_replacement_ignores_planted_predictable_temp_symlink() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.toml");
+    let victim = directory.path().join("other.toml");
+    let old_temp = config.with_extension(format!("toml.{}.tmp", std::process::id()));
+    std::fs::write(&config, "[original]\nvalue = 1\n").unwrap();
+    std::fs::write(&victim, "do not change").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&victim, &old_temp).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_file(&victim, &old_temp).is_err() {
+        // Windows installations without symlink privilege still run the
+        // predictable-name collision case below.
+        return;
+    }
+    write_grok_config_validated(&config, "[updated]\nvalue = 2\n").unwrap();
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "do not change");
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "[updated]\nvalue = 2\n"
+    );
+    assert!(std::fs::symlink_metadata(&old_temp)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+#[test]
+fn grok_config_replacement_ignores_planted_predictable_temp_collision() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.toml");
+    let old_temp = config.with_extension(format!("toml.{}.tmp", std::process::id()));
+    std::fs::write(&config, "[original]\nvalue = 1\n").unwrap();
+    std::fs::write(&old_temp, "keep this unrelated file").unwrap();
+    write_grok_config_validated(&config, "[updated]\nvalue = 2\n").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&old_temp).unwrap(),
+        "keep this unrelated file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "[updated]\nvalue = 2\n"
+    );
+}
+
+#[test]
+fn grok_config_replacement_preserves_existing_permissions_and_replaces_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.toml");
+    std::fs::write(&config, "[original]\nvalue = 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    let before = std::fs::metadata(&config).unwrap().permissions();
+    write_grok_config_validated(&config, "[updated]\nvalue = 2\n").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "[updated]\nvalue = 2\n"
+    );
+    let after = std::fs::metadata(&config).unwrap().permissions();
+    assert_eq!(after.readonly(), before.readonly());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(after.mode() & 0o777, before.mode() & 0o777);
+    }
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }
 
 #[test]

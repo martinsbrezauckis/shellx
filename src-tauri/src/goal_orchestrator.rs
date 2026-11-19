@@ -1387,7 +1387,7 @@ async fn write_scratchboard_text_with_policy(
     text: &str,
     allow_wsl_bridge: bool,
 ) -> Result<(), String> {
-    if std::fs::write(path, text).is_ok() {
+    if write_local_scratchboard(path, text).is_ok() {
         return Ok(());
     }
     let path_str = path.to_string_lossy().to_string();
@@ -1395,7 +1395,7 @@ async fn write_scratchboard_text_with_policy(
     {
         if allow_wsl_bridge && path_str.starts_with('/') {
             if let Some(windows_path) = wsl_drive_mount_to_windows_path(&path_str) {
-                if std::fs::write(&windows_path, text).is_ok() {
+                if write_local_scratchboard(&windows_path, text).is_ok() {
                     info!(
                         "write_scratchboard_text: WSL drive mount hit path={}",
                         windows_path.display()
@@ -1405,7 +1405,7 @@ async fn write_scratchboard_text_with_policy(
             }
             for distro in crate::host_mcp::wsl_running_distros().await {
                 if let Some(unc) = crate::skill_install::wsl_path_to_unc(&distro, &path_str) {
-                    if std::fs::write(&unc, text).is_ok() {
+                    if write_local_scratchboard(&unc, text).is_ok() {
                         info!(
                             "write_scratchboard_text: WSL UNC hit distro='{}' path={}",
                             distro,
@@ -1426,6 +1426,13 @@ async fn write_scratchboard_text_with_policy(
         "write_scratchboard_text: path {} not writable (tried {})",
         path_str, attempts
     ))
+}
+
+fn write_local_scratchboard(path: &Path, text: &str) -> Result<(), String> {
+    let root = path
+        .parent()
+        .ok_or("Goal scratchboard has no project directory")?;
+    crate::linked_file_write::in_place_under(root, path, text.as_bytes())
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
