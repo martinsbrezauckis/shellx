@@ -34,7 +34,7 @@ zeroize = { version = "1.8", features = ["zeroize_derive"] }
 
 # data
 fastcdc = "4.0.1"
-postcard = { version = "1.1", features = ["use-std"] }
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lz4_flex = "0.13"

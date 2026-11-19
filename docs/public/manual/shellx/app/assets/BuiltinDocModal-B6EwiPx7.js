@@ -1,4 +1,4 @@
-import{f as t,j as e,S as c}from"./LazySurface-EcW3B_n5.js";import{V as d,M as p,a as u,b as h}from"./shellx-Bye1Wj_x.js";import{u as w}from"./useModalFocus-BdgPt4s6.js";import"./task-teach-handoff-events-B2JD3vZe.js";const m=`# Changelog
+import{f as t,j as e,S as c}from"./LazySurface-EcW3B_n5.js";import{V as d,M as p,a as u,b as h}from"./shellx-DiSOZ1W4.js";import{u as w}from"./useModalFocus-BdgPt4s6.js";import"./task-teach-handoff-events-B2JD3vZe.js";const m=`# Changelog
 
 All notable public changes to shellX are documented here.
 
@@ -719,7 +719,7 @@ This notice lists the declared licenses for ShellX production dependencies in
 the supported Windows, macOS, and Linux dependency graphs.
 
 The npm closure below contains 133 production packages. The Cargo
-rows contain 666 unique package/version/license/source records;
+rows contain 663 unique package/version/license/source records;
 each lists the supported target graphs that include it. Build-only Cargo
 dependencies are excluded.
 
@@ -1068,12 +1068,10 @@ Cargo normal dependency graphs
 - gtk3-macros@0.18.2 — MIT; crates.io; linux
 - h2@0.4.16 — MIT; crates.io; linux,macos,windows
 - half@2.7.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
-- hash32@0.2.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - hashbrown@0.12.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - hashbrown@0.14.5 — MIT OR Apache-2.0; crates.io; linux
 - hashbrown@0.17.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - hashlink@0.12.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
-- heapless@0.7.17 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - heck@0.4.1 — MIT OR Apache-2.0; crates.io; linux
 - heck@0.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - hex@0.4.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
@@ -1332,7 +1330,6 @@ Cargo normal dependency graphs
 - softbuffer@0.4.8 — MIT OR Apache-2.0; crates.io; windows
 - soup3@0.5.0 — MIT; crates.io; linux
 - soup3-sys@0.5.0 — MIT; crates.io; linux
-- spin@0.9.8 — MIT; crates.io; linux,macos,windows
 - stable_deref_trait@1.2.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
 - static_assertions@1.1.0 — MIT OR Apache-2.0; crates.io; linux
 - string_cache@0.9.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows

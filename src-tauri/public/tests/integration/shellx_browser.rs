@@ -1526,8 +1526,25 @@ fn browser_actions_return_compact_agent_step_summary() {
         Some("https://example.com/dashboard")
     );
     assert_eq!(summary.security_level, "secure");
-    assert!(summary.refs >= 3);
-    assert!(summary.accessibility_nodes >= 3);
+    // This registry-only observe has no native engine. Its page and address
+    // chrome refs are the complete observation; a report control is not a
+    // routed agent action and must not be fabricated to satisfy the count.
+    let observation = observed.observation.as_ref().expect("fallback observation");
+    assert!(observed.requires_engine);
+    assert_eq!(
+        observation
+            .refs
+            .iter()
+            .map(|reference| reference.ref_id.as_str())
+            .collect::<Vec<_>>(),
+        ["page", "address"]
+    );
+    assert_eq!(summary.refs, observation.refs.len());
+    assert_eq!(
+        summary.accessibility_nodes,
+        observation.accessibility_tree.len()
+    );
+    assert_eq!(summary.accessibility_nodes, 2);
     assert!(summary.needs_observe);
     assert!(summary
         .next_actions
